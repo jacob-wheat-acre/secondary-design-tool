@@ -137,6 +137,8 @@
       <div id="tab-parameters" class="tab">Parameters & Library</div>
     </div>
     <div class="spacer"></div>
+    <button class="btn secondary" id="btn-undo" disabled title="Ctrl+Z">Undo</button>
+    <button class="btn secondary" id="btn-redo" disabled title="Ctrl+Y">Redo</button>
     <button class="btn secondary" id="btn-selftest">Run Self‑Test</button>
     <button class="btn secondary" id="btn-export">Export JSON</button>
     <label class="btn secondary" for="importFile" style="cursor:pointer;">Import JSON</label>
@@ -246,6 +248,48 @@
  *  Utilities & complex math
  *  ============================ */
 const uid = () => Math.random().toString(36).slice(2,9);
+
+/** ============================
+ *  Undo / Redo
+ *  ============================ */
+const MAX_HISTORY = 50;
+const _history = [];
+const _redoStack = [];
+
+function _snapshot(){
+  const {calc, ...rest} = model;
+  return JSON.parse(JSON.stringify(rest));
+}
+function pushHistory(){
+  _history.push(_snapshot());
+  if (_history.length > MAX_HISTORY) _history.shift();
+  _redoStack.length = 0;
+  _updateUndoButtons();
+}
+function undo(){
+  if (!_history.length) return;
+  _redoStack.push(_snapshot());
+  Object.assign(model, _history.pop());
+  model.calc = { results: null };
+  selection = null;
+  render();
+  _updateUndoButtons();
+}
+function redo(){
+  if (!_redoStack.length) return;
+  _history.push(_snapshot());
+  Object.assign(model, _redoStack.pop());
+  model.calc = { results: null };
+  selection = null;
+  render();
+  _updateUndoButtons();
+}
+function _updateUndoButtons(){
+  const bu = document.getElementById('btn-undo');
+  const br = document.getElementById('btn-redo');
+  if (bu) bu.disabled = _history.length === 0;
+  if (br) br.disabled = _redoStack.length === 0;
+}
 const clamp = (v,min,max) => Math.max(min, Math.min(max, v));
 const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
 const kft = ft => ft/1000;
@@ -387,7 +431,7 @@ toolDelete.onclick  = ()=> deleteSelected();
 toolAddXfmr.onclick = ()=>{
   const have = model.nodes.some(n=>n.type==='xfmr');
   if (have){ alert('A transformer already exists.'); return; }
-  createXfmrNode(); render();
+  pushHistory(); createXfmrNode(); render();
 };
 
 const primaryNomV = document.getElementById('primaryNomV');
@@ -519,10 +563,12 @@ function renderConductorLib(){
     rEl.oninput    = ()=>{ cn.R_ohm_kft = +rEl.value; requestRender(); };
     xEl.oninput    = ()=>{ cn.X_ohm_kft = +xEl.value; requestRender(); };
     wrap.querySelector('[data-act="dupe"]').onclick = ()=>{
+      pushHistory();
       const copy = {...cn, id: uid(), name: cn.name+' (copy)'}; model.conductors.push(copy); render();
     };
     wrap.querySelector('[data-act="del"]').onclick = ()=>{
       if (!confirm('Delete conductor type?')) return;
+      pushHistory();
       const idx = model.conductors.findIndex(x=>x.id===cn.id);
       model.conductors.splice(idx,1);
       if (model.defaults.secondaryCondId===cn.id) model.defaults.secondaryCondId = model.conductors[0]?.id || null;
@@ -534,6 +580,7 @@ function renderConductorLib(){
     condList.appendChild(wrap);
   });
   addConductorBtn.onclick = ()=>{
+    pushHistory();
     model.conductors.push({ id: uid(), name:'New Conductor', R_ohm_kft:0.1, X_ohm_kft:0.05, ampacity:200 });
     render();
   };
@@ -599,6 +646,7 @@ function addHouseAt(x,y){
     if (!nodes.length) return;
     attachNode = nodes.reduce((best,n)=> (dist({x,y},n) < dist({x,y},best) ? n : best), nodes[0]);
   }
+  pushHistory();
   const house = {
     id: uid(), type:'house', name:'House',
     x: x, y: y,
@@ -731,6 +779,7 @@ function renderCanvas(){
           segmentCreation.lastNodeId = n.id;
           setSelection(isHouse(n) ? {type:'house', id:n.id} : {type:'node', id:n.id});
         } else {
+          pushHistory();
           model.segments.push({
             id: uid(),
             from: segmentCreation.lastNodeId,
@@ -747,6 +796,7 @@ function renderCanvas(){
       // SELECT/MOVE: select and start drag
       if (tool === 'select'){
         setSelection(isHouse(n) ? {type:'house', id:n.id} : {type:'node', id:n.id});
+        pushHistory();
         dragState = { id:n.id, dx: n.x - p.x, dy: n.y - p.y };
       }
     };
@@ -781,6 +831,7 @@ function renderCanvas(){
 
       // Blank background: chain adds a new node; else one-off from selected node (e.g., transformer)
       if (segmentCreation.active){
+        pushHistory();
         const newNode = { id: uid(), type:'node', name:'N', x:p.x, y:p.y };
         model.nodes.push(newNode);
         model.segments.push({
@@ -798,6 +849,7 @@ function renderCanvas(){
         if (!startNode) startNode = model.nodes.find(n=>n.type==='xfmr');
         if (!startNode){ alert('Select a node or add a transformer first.'); return; }
 
+        pushHistory();
         const newNode = { id: uid(), type:'node', name:'N', x:p.x, y:p.y };
         model.nodes.push(newNode);
         model.segments.push({
@@ -895,6 +947,8 @@ function renderCanvas(){
  *  ============================ */
 document.addEventListener('keydown', (e)=>{
   if (e.key === 'Delete'){ deleteSelected(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))){ e.preventDefault(); redo(); }
 });
 
 /** ============================
@@ -902,6 +956,7 @@ document.addEventListener('keydown', (e)=>{
  *  ============================ */
 function deleteSelected(){
   if (!selection) return;
+  pushHistory();
   const {type, id} = selection;
   if (type==='house'){
     const idx = model.nodes.findIndex(n=>n.id===id); if (idx>=0) model.nodes.splice(idx,1);
@@ -1408,6 +1463,7 @@ document.getElementById('importFile').onchange = (e)=>{
   fr.onload = ()=>{
     try{
       const obj = JSON.parse(fr.result);
+      pushHistory();
       Object.assign(model, obj);
       selection=null; render();
     } catch(err){
@@ -1452,6 +1508,9 @@ document.getElementById('btn-selftest').onclick = ()=>{
     console.error(e); alert('Self‑Test error (see console).'); Object.assign(model, backup); render();
   }
 };
+
+document.getElementById('btn-undo').onclick = ()=> undo();
+document.getElementById('btn-redo').onclick = ()=> redo();
 
 /** Initial render */
 render();
