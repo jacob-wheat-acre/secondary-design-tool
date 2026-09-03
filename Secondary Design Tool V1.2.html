@@ -17,7 +17,7 @@
     --ok:#059669;
     --warn:#d97706;
     --grid:#e5e7eb;
-    --select:#f59e0b; /* orange highlight */
+    --select:#eab308; /* yellow highlight */
   }
   html, body { height:100%; }
   body{
@@ -96,7 +96,7 @@
   /* Selected highlighting (color-only, thicker) */
   .selected .segment{ stroke: var(--select) !important; stroke-width:4 !important; }
   .selected .service{ stroke: var(--select) !important; stroke-width:3.5 !important; stroke-dasharray:none !important; }
-  .selected .node circle{ stroke: var(--select) !important; stroke-width:3 !important; }
+  .selected.node circle{ fill: var(--select) !important; stroke: var(--select) !important; stroke-width:3 !important; }
   .selected polygon{ stroke: var(--select) !important; stroke-width:2.5 !important; }
   .selected .house rect{ stroke: var(--select) !important; }
 
@@ -188,7 +188,7 @@
             <option>1‑ph 120/240</option>
             <option>1‑ph 120</option>
             <option>1‑ph 240</option>
-            <option>3‑ph (treated as 1‑ph equivalent)</option>
+            <option disabled>3‑ph — coming soon</option>
           </select>
         </div>
       </div>
@@ -233,6 +233,7 @@
     <div class="canvas-wrap">
       <div class="canvas-header">Drag background to pan. Scroll to zoom.</div>
       <div id="canvas-sel-indicator" style="position:absolute;top:8px;right:8px;background:#ffffffcc;padding:5px 10px;border-radius:8px;border:1px solid var(--grid);font-size:12px;color:var(--ink);z-index:1;display:none;"></div>
+      <div id="loop-warning" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);background:#fef2f2;padding:6px 14px;border-radius:8px;border:1px solid #fca5a5;font-size:12px;color:#b91c1c;z-index:2;display:none;pointer-events:none;"></div>
       <div id="scale-bar-wrap" style="position:absolute;bottom:12px;left:12px;background:#ffffffd0;border:1px solid #d1d5db;border-radius:4px;padding:4px 8px;pointer-events:none;z-index:1;">
         <svg id="scale-bar-svg" height="20" style="display:block;overflow:visible;"></svg>
         <div id="scale-bar-label" style="text-align:center;font-size:11px;color:#475569;font-family:Inter,Segoe UI,system-ui,sans-serif;margin-top:2px;"></div>
@@ -484,6 +485,45 @@ function requestRender(opts={skipDetails:false}){
     if (!opts.skipDetails) renderDetails();
   }catch(e){ console.error(e); }
 }
+function hasLoop(){
+  const nonHouse = model.nodes.filter(n=>n.type!=='house');
+  if (nonHouse.length === 0) return false;
+  const ids = new Set(nonHouse.map(n=>n.id));
+  // Build adjacency list for undirected graph
+  const adj = {};
+  nonHouse.forEach(n=>{ adj[n.id]=[]; });
+  model.segments.forEach(s=>{
+    if (ids.has(s.from) && ids.has(s.to)){
+      adj[s.from].push(s.to);
+      adj[s.to].push(s.from);
+    }
+  });
+  // DFS from transformer; back edge = cycle
+  const xfmr = nonHouse.find(n=>n.type==='xfmr');
+  if (!xfmr) return false;
+  const visited = new Set();
+  function dfs(id, parentId){
+    visited.add(id);
+    for (const nb of adj[id]){
+      if (nb===parentId) continue;
+      if (visited.has(nb)) return true;
+      if (dfs(nb, id)) return true;
+    }
+    return false;
+  }
+  return dfs(xfmr.id, null);
+}
+function updateLoopWarning(){
+  const el = document.getElementById('loop-warning');
+  if (!el) return;
+  if (hasLoop()){
+    el.textContent = '⚠ Loop detected — power flow results are invalid. Remove the segment that closes the ring.';
+    el.style.display='block';
+  } else {
+    el.style.display='none';
+  }
+}
+
 function render(){
   try{
     renderParams();
@@ -493,6 +533,7 @@ function render(){
     computeAndRenderResults();
     renderDetails();
     updateAddXfmrButton();
+    updateLoopWarning();
   }catch(err){
     console.error(err);
     resultsSummary.innerHTML = `<div class="bad">Render error: ${String(err)}</div>`;
@@ -642,7 +683,14 @@ function updateSelectionIndicator(){
     if (svc){ text = `Service · ${Math.round(serviceLengthFt(svc))} ft · ${getConductor(svc.condId).name}`; }
   } else if (selection.type==='node'){
     const n = getNodeById(selection.id);
-    if (n) text = n.type==='xfmr' ? `Transformer · ${model.transformer.kva} kVA` : `Junction node${n.name && n.name!=='N' ? ' · '+n.name : ''}`;
+    if (n){
+      if (n.type==='xfmr'){
+        text = `Transformer · ${model.transformer.kva} kVA`;
+      } else {
+        const jIdx = model.nodes.filter(n2=>n2.type==='node').indexOf(n)+1;
+        text = `Junction Node N${jIdx} · see Details panel`;
+      }
+    }
   } else if (selection.type==='house'){
     const h = getNodeById(selection.id);
     if (h){
@@ -658,6 +706,7 @@ function updateSelectionIndicator(){
  *  Canvas drawing & interactions
  *  ============================ */
 let dragState = null;
+let _dragRafPending = false;
 
 /* Segment tool: chain aware + one-off from selected node */
 let segmentCreation = { active:false, lastNodeId:null };
@@ -833,6 +882,14 @@ function renderCanvas(){
         c.setAttribute('cx', n.x); c.setAttribute('cy', n.y); c.setAttribute('r', 6);
         c.setAttribute('fill','#fff'); c.setAttribute('stroke','#64748b'); c.setAttribute('stroke-width','2');
         g.appendChild(c);
+        const jIdx = model.nodes.filter(n2=>n2.type==='node').indexOf(n)+1;
+        const lbl=document.createElementNS('http://www.w3.org/2000/svg','text');
+        lbl.setAttribute('x',n.x+10); lbl.setAttribute('y',n.y-8);
+        lbl.setAttribute('font-size','10'); lbl.setAttribute('fill','#64748b');
+        lbl.setAttribute('font-family','Inter,Segoe UI,system-ui,sans-serif');
+        lbl.setAttribute('pointer-events','none');
+        lbl.textContent=`N${jIdx}`;
+        g.appendChild(lbl);
       }
     }
 
@@ -858,7 +915,8 @@ function renderCanvas(){
             condId: model.defaults.secondaryCondId,
             angleDeg: null
           });
-          segmentCreation.lastNodeId = n.id; // continue chaining
+          segmentCreation.lastNodeId = n.id;
+          setSelection(isHouse(n) ? {type:'house', id:n.id} : {type:'node', id:n.id});
           requestRender();
         }
         return;
@@ -898,6 +956,7 @@ function renderCanvas(){
             angleDeg: null
           });
           segmentCreation.lastNodeId = nearNode.id;
+          setSelection({type:'node', id:nearNode.id});
           requestRender();
         }
         return;
@@ -916,6 +975,7 @@ function renderCanvas(){
           angleDeg: null
         });
         segmentCreation.lastNodeId = newNode.id;
+        setSelection({type:'node', id:newNode.id});
         requestRender();
       } else {
         let startNode = null;
@@ -933,7 +993,9 @@ function renderCanvas(){
           condId: model.defaults.secondaryCondId,
           angleDeg: null
         });
-        setSelection({ type:'node', id: startNode.id }); // allow repeated one-offs
+        segmentCreation.active = true;
+        segmentCreation.lastNodeId = newNode.id;
+        setSelection({type:'node', id:newNode.id});
         requestRender();
       }
       return;
@@ -1008,9 +1070,10 @@ function renderCanvas(){
       }
       /* END angle update */
 
-      renderCanvas();
-      computeAndRenderResults();
-      // keep details intact to avoid caret jump
+      if (!_dragRafPending){
+        _dragRafPending = true;
+        requestAnimationFrame(()=>{ _dragRafPending=false; renderCanvas(); });
+      }
       return;
     }
 
@@ -1023,7 +1086,7 @@ function renderCanvas(){
   };
 
   window.onmouseup = ()=>{
-    dragState=null;
+    if (dragState){ dragState=null; _dragRafPending=false; render(); }
     if (panDrag){ panDrag=null; canvas.style.cursor='default'; }
   };
 }
@@ -1485,7 +1548,14 @@ function renderDetails(){
     if (n.type==='xfmr'){
       detailsPanel.innerHTML = `<h4>Transformer</h4><div class="note">Drag to reposition. Transformer parameters live in the Parameters tab.</div>`;
     } else {
-      detailsPanel.innerHTML = `<h4>Inline Node</h4><div class="note">Drag to reposition.</div>`;
+      const jIdx = model.nodes.filter(n2=>n2.type==='node').indexOf(n)+1;
+      detailsPanel.innerHTML = `<h4>Junction Node N${jIdx}</h4>
+        <div class="note">Drag to reposition. To place a house here, click <b>Add House at N${jIdx}</b> below, then drag the house to the desired position.</div>
+        <button class="btn secondary" id="addHouseFromNode" style="margin-top:8px;width:100%;">Add House at N${jIdx}</button>`;
+      detailsPanel.querySelector('#addHouseFromNode').onclick = ()=>{
+        addHouseAt(n.x, n.y - 60);
+        requestRender();
+      };
     }
     return;
   }
@@ -1607,11 +1677,22 @@ document.getElementById('importFile').onchange = (e)=>{
   fr.onload = ()=>{
     try{
       const obj = JSON.parse(fr.result);
+      const errors = [];
+      const requiredArrays = ['nodes','segments','services','conductors'];
+      for (const key of requiredArrays){
+        if (!(key in obj)) errors.push(`missing "${key}"`);
+        else if (!Array.isArray(obj[key])) errors.push(`"${key}" must be an array`);
+      }
+      if (!obj.transformer || typeof obj.transformer !== 'object') errors.push('missing "transformer"');
+      if (errors.length){
+        alert('Import failed — file does not look like a valid Secondary Design Tool save:\n• ' + errors.join('\n• '));
+        return;
+      }
       pushHistory();
       Object.assign(model, obj);
       selection=null; render();
     } catch(err){
-      alert('Invalid JSON file.');
+      alert('Invalid JSON file — could not parse.');
     }
   };
   fr.readAsText(file);
