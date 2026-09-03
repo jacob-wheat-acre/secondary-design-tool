@@ -470,7 +470,7 @@ const defaultSvcConductor = document.getElementById('defaultSvcConductor');
  *  Rendering orchestration
  *  ============================ */
 let selection = null;
-function setSelection(obj){ selection = obj; render(); }
+function setSelection(obj){ selection = obj; updateSelectionIndicator(); render(); }
 function requestRender(opts={skipDetails:false}){
   try{
     computeAndRenderResults();
@@ -636,7 +636,7 @@ function updateSelectionIndicator(){
     if (svc){ text = `Service · ${Math.round(serviceLengthFt(svc))} ft · ${getConductor(svc.condId).name}`; }
   } else if (selection.type==='node'){
     const n = getNodeById(selection.id);
-    if (n) text = n.type==='xfmr' ? `Transformer · ${model.transformer.kva} kVA` : `Node`;
+    if (n) text = n.type==='xfmr' ? `Transformer · ${model.transformer.kva} kVA` : `Junction node${n.name && n.name!=='N' ? ' · '+n.name : ''}`;
   } else if (selection.type==='house'){
     const h = getNodeById(selection.id);
     if (h){
@@ -662,6 +662,11 @@ function isHouse(n){ return n && n.type==='house'; }
 function cleanInvalidSegments(){
   model.segments = model.segments.filter(s => getNodeById(s.from) && getNodeById(s.to));
   model.services = model.services.filter(s => getNodeById(s.nodeId) && getNodeById(s.houseId));
+  if (selection){
+    if (selection.type==='segment' && !model.segments.find(s=>s.id===selection.id)) selection=null;
+    if (selection.type==='service' && !model.services.find(s=>s.id===selection.id))  selection=null;
+    if ((selection.type==='node'||selection.type==='house') && !getNodeById(selection.id)) selection=null;
+  }
 }
 function segmentLengthFt(seg){
   const a=getNodeById(seg.from), b=getNodeById(seg.to);
@@ -821,6 +826,11 @@ function renderCanvas(){
         tri.setAttribute('fill', '#ef4444'); tri.setAttribute('stroke', '#7f1d1d'); tri.setAttribute('stroke-width','1.5');
         g.appendChild(tri);
       } else {
+        g.classList.add('node');
+        const hitC=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        hitC.setAttribute('cx', n.x); hitC.setAttribute('cy', n.y); hitC.setAttribute('r', 14);
+        hitC.setAttribute('fill','#000'); hitC.setAttribute('opacity','0');
+        g.appendChild(hitC);
         const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
         c.setAttribute('cx', n.x); c.setAttribute('cy', n.y); c.setAttribute('r', 6);
         c.setAttribute('fill','#fff'); c.setAttribute('stroke','#64748b'); c.setAttribute('stroke-width','2');
