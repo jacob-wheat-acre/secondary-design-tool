@@ -652,6 +652,7 @@ function addHouseAt(x,y){
     x: x, y: y,
     sqft: 2000, heating:'Gas', ev_kw:0,
     kw_base: 5, pf: model.defaultPF, cf: model.globalCF,
+    motor_starting_kva: 0,
     svcCondId: model.defaults.serviceCondId
   };
   model.nodes.push(house);
@@ -1115,6 +1116,29 @@ function compute(){
     });
   });
 
+  // Thevenin path impedance at each node (xfmr Z + cumulative segment Z upstream)
+  const nodePathZ = {};
+  nodePathZ[xf.id] = Zxf;
+  for (const u of order){
+    if (!(u in nodePathZ)) continue;
+    for (const v of (children[u]||[])){
+      const seg = model.segments.find(s=>(s.from===u&&s.to===v)||(s.from===v&&s.to===u));
+      nodePathZ[v] = cadd(nodePathZ[u], seg ? segmentZ(seg) : c(0,0));
+    }
+  }
+
+  // Flicker: voltage dip from motor starting at each house
+  const flickerResults = [];
+  model.services.forEach(svc=>{
+    const h = model.nodes.find(n=>n.id===svc.houseId);
+    if (!h || !(h.motor_starting_kva > 0)) return;
+    if (!(svc.nodeId in nodePathZ)) return;
+    const Zpath  = cadd(nodePathZ[svc.nodeId], serviceZ(h.id));
+    const I_start = (h.motor_starting_kva * 1000) / V0;
+    const dip_pct = (I_start * cabs(Zpath) / V0) * 100;
+    flickerResults.push({ houseId: h.id, houseName: h.name||'House', dip_pct, I_start });
+  });
+
   const Vbase = V0;
   let worst = { houseId:null, dropPct:0, Vmin:V0 };
   const housesReachable = Object.values(housesByNode).flat();
@@ -1162,7 +1186,7 @@ function compute(){
     ok:true, Vnode, houseVolt, Vbase,
     worst, segAmps, svcAmps,
     xfmr: { S_kVA:Sxf_kVA, I_A:Ixf_A, Z:c(Zxf.re, Zxf.im) },
-    Sdown, parent, children
+    Sdown, parent, children, flickerResults
   };
 }
 
@@ -1170,6 +1194,10 @@ function fmt(n, d=2){ return (Number.isFinite(n)? n : 0).toFixed(d); }
 function badge(val, good, warn){
   let cls='ok'; if (val>=warn) cls='bad'; else if (val>=good) cls='warn';
   return `<span class="pill ${cls}">${fmt(val,1)}%</span>`;
+}
+function flickerBadge(pct){
+  let cls='ok'; if (pct>=5) cls='bad'; else if (pct>=3) cls='warn';
+  return `<span class="pill ${cls}">${fmt(pct,1)}%</span>`;
 }
 
 function computeAndRenderResults(){
@@ -1188,6 +1216,14 @@ function computeAndRenderResults(){
     const Vmin    = haveHouses ? (R.worst.Vmin || model.secondaryNomV) : null;
     const worstHouseName = haveHouses && R.worst.houseId ? (getNodeById(R.worst.houseId)?.name || '—') : '—';
 
+    const flickerList = R.flickerResults || [];
+    const flickerHTML = flickerList.length ? `
+      <div style="margin-top:8px; border-top:1px solid var(--grid); padding-top:8px;">
+        <b>Flicker — Motor Starting</b>
+        <span class="note" style="font-size:11px; margin-left:6px;">&lt;3% ok · 3–5% marginal · ≥5% objectionable</span>
+        ${flickerList.map(f=>`<div style="margin-top:3px;">${f.houseName}: ${flickerBadge(f.dip_pct)} dip &nbsp;<span class="note">(${fmt(f.I_start,1)} A inrush)</span></div>`).join('')}
+      </div>` : '';
+
     resultsSummary.innerHTML = `
       <div class="row">
         <div>
@@ -1202,7 +1238,8 @@ function computeAndRenderResults(){
           <div><b>Max service ampacity</b>: ${fmt(maxSvcPct,1)}%</div>
           <div class="note">${haveHouses?'':'Add houses and segments to see detailed results.'}</div>
         </div>
-      </div>`;
+      </div>
+      ${flickerHTML}`;
     model.calc.results = R;
   }catch(err){
     console.error(err);
@@ -1375,6 +1412,7 @@ function renderDetails(){
     const Vh = (R.houseVolt||{})[h.id];
     const Vmag = Vh ? cabs(Vh) : NaN;
     const dropPct = Vh ? ((model.secondaryNoLoadV - Vmag)/model.secondaryNoLoadV)*100 : NaN;
+    const flickerResult = (R.flickerResults||[]).find(f=>f.houseId===h.id);
 
     detailsPanel.innerHTML = `
       <h4>House</h4>
@@ -1400,6 +1438,10 @@ function renderDetails(){
         <div><label>Coincidence Factor</label><input id="hCF" type="number" step="0.01" min="0" max="1" value="${(typeof h.cf==='number')? h.cf : (model.globalCF||0.7)}" /></div>
         <div><label>Service Conductor</label><select id="hSvcCond"></select></div>
       </div>
+      <div class="row">
+        <div><label>Motor Starting kVA <span class="note">(0 = none)</span></label><input id="hMotorKVA" type="number" step="0.1" min="0" value="${h.motor_starting_kva||0}" /></div>
+        <div></div>
+      </div>
       <div style="margin-top:8px; display:flex; gap:8px;">
         <button class="btn secondary" id="estimateLoad">Estimate from Sq Ft</button>
         <button class="btn danger" id="deleteHouse">Delete House</button>
@@ -1408,7 +1450,8 @@ function renderDetails(){
       <div class="row">
         <div><div class="kv">Voltage: ${Vh ? fmt(Vmag,1)+' V' : '—'}</div></div>
         <div><div>Drop: ${Vh ? fmt(dropPct,2)+' %' : '—'}</div></div>
-      </div>`;
+      </div>
+      ${flickerResult ? `<div style="margin-top:4px;"><b>Flicker dip:</b> ${flickerBadge(flickerResult.dip_pct)} &nbsp;<span class="note">(${fmt(flickerResult.I_start,1)} A inrush · &lt;3% ok · 3–5% marginal · ≥5% objectionable)</span></div>` : ''}`;
 
     const hSvcCond = detailsPanel.querySelector('#hSvcCond');
     model.conductors.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; hSvcCond.appendChild(o); });
@@ -1426,6 +1469,7 @@ function renderDetails(){
     detailsPanel.querySelector('#hKW').oninput   = (e)=>{ h.kw_base=+e.target.value; requestRender({skipDetails:true}); };
     detailsPanel.querySelector('#hPF').oninput   = (e)=>{ h.pf=+e.target.value; requestRender({skipDetails:true}); };
     detailsPanel.querySelector('#hCF').oninput   = (e)=>{ h.cf=clamp(+e.target.value,0,1); requestRender({skipDetails:true}); };
+    detailsPanel.querySelector('#hMotorKVA').oninput = (e)=>{ h.motor_starting_kva=Math.max(0,+e.target.value||0); requestRender({skipDetails:true}); };
 
     detailsPanel.querySelector('#deleteHouse').onclick = ()=>{
       if(confirm('Delete this house?')){ selection={type:'house', id:h.id}; deleteSelected(); }
