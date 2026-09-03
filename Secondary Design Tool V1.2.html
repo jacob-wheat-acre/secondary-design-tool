@@ -1442,6 +1442,13 @@ function renderDetails(){
         <div><label>Motor Starting kVA <span class="note">(0 = none)</span></label><input id="hMotorKVA" type="number" step="0.1" min="0" value="${h.motor_starting_kva||0}" /></div>
         <div></div>
       </div>
+      <div class="note" style="margin:-4px 0 8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+        <span>Presets:</span>
+        <button class="btn secondary" data-kva="8"  style="padding:2px 8px;font-size:11px;">2-ton AC (8 kVA)</button>
+        <button class="btn secondary" data-kva="12" style="padding:2px 8px;font-size:11px;">3-ton AC (12 kVA)</button>
+        <button class="btn secondary" data-kva="18" style="padding:2px 8px;font-size:11px;">5-ton AC (18 kVA)</button>
+        <button class="btn secondary" data-kva="6"  style="padding:2px 8px;font-size:11px;">Well pump (6 kVA)</button>
+      </div>
       <div style="margin-top:8px; display:flex; gap:8px;">
         <button class="btn secondary" id="estimateLoad">Estimate from Sq Ft</button>
         <button class="btn danger" id="deleteHouse">Delete House</button>
@@ -1470,6 +1477,14 @@ function renderDetails(){
     detailsPanel.querySelector('#hPF').oninput   = (e)=>{ h.pf=+e.target.value; requestRender({skipDetails:true}); };
     detailsPanel.querySelector('#hCF').oninput   = (e)=>{ h.cf=clamp(+e.target.value,0,1); requestRender({skipDetails:true}); };
     detailsPanel.querySelector('#hMotorKVA').oninput = (e)=>{ h.motor_starting_kva=Math.max(0,+e.target.value||0); requestRender({skipDetails:true}); };
+    detailsPanel.querySelectorAll('[data-kva]').forEach(btn=>{
+      btn.onclick = ()=>{
+        h.motor_starting_kva = +btn.dataset.kva;
+        const el = detailsPanel.querySelector('#hMotorKVA');
+        if (el) el.value = h.motor_starting_kva;
+        requestRender({skipDetails:true});
+      };
+    });
 
     detailsPanel.querySelector('#deleteHouse').onclick = ()=>{
       if(confirm('Delete this house?')){ selection={type:'house', id:h.id}; deleteSelected(); }
