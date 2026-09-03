@@ -303,6 +303,12 @@ function _updateUndoButtons(){
 }
 const clamp = (v,min,max) => Math.max(min, Math.min(max, v));
 const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+function distToSegment(px, py, x1, y1, x2, y2){
+  const dx=x2-x1, dy=y2-y1, lenSq=dx*dx+dy*dy;
+  if (!lenSq) return Math.hypot(px-x1, py-y1);
+  const t = Math.max(0, Math.min(1, ((px-x1)*dx+(py-y1)*dy)/lenSq));
+  return Math.hypot(px-(x1+t*dx), py-(y1+t*dy));
+}
 const kft = ft => ft/1000;
 function pxPerFt(){ return 40 / (model.ftPerGrid || 40); }
 
@@ -761,10 +767,6 @@ function renderCanvas(){
 
     if (selection && selection.type==='segment' && selection.id===seg.id) g.classList.add('selected');
 
-    const selectHandler = (e)=>{ e.stopPropagation(); setSelection({type:'segment', id:seg.id}); /* do not change tool here */ };
-    hit.onmousedown = selectHandler;
-    line.onmousedown= selectHandler;
-
     canvas.appendChild(g);
   });
 
@@ -787,10 +789,6 @@ function renderCanvas(){
     g.appendChild(line);
 
     if (selection && selection.type==='service' && selection.id===svc.id) g.classList.add('selected');
-
-    const selectHandler = (e)=>{ e.stopPropagation(); setSelection({type:'service', id:svc.id}); };
-    hit.onmousedown = selectHandler;
-    line.onmousedown= selectHandler;
 
     canvas.appendChild(g);
   });
@@ -946,6 +944,18 @@ function renderCanvas(){
       segmentCreation.active=false;
       requestRender();
       return;
+    }
+
+    if (tool==='select'){
+      const tol = 9 * (vb.w / (VB_BASE.w || 900));
+      for (const seg of model.segments){
+        const a=getNodeById(seg.from), b=getNodeById(seg.to);
+        if (a && b && distToSegment(p.x,p.y,a.x,a.y,b.x,b.y) < tol){ setSelection({type:'segment',id:seg.id}); return; }
+      }
+      for (const svc of model.services){
+        const n=getNodeById(svc.nodeId), h=getNodeById(svc.houseId);
+        if (n && h && distToSegment(p.x,p.y,n.x,n.y,h.x,h.y) < tol){ setSelection({type:'service',id:svc.id}); return; }
+      }
     }
 
     if (tool==='select' && !dragState){
