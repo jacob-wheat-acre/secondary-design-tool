@@ -1,0 +1,1460 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Secondary Voltage & Flicker Study Tool</title>
+<style>
+  :root{
+    --bg:#f6f8fb;
+    --panel:#ffffff;
+    --ink:#1f2937;
+    --muted:#6b7280;
+    --accent:#2563eb;
+    --accent-2:#1d4ed8;
+    --danger:#dc2626;
+    --ok:#059669;
+    --warn:#d97706;
+    --grid:#e5e7eb;
+    --select:#f59e0b; /* orange highlight */
+  }
+  html, body { height:100%; }
+  body{
+    margin:0; font-family: Inter, Segoe UI, system-ui, -apple-system, Arial, sans-serif;
+    color:var(--ink); background:var(--bg);
+  }
+  * { box-sizing: border-box; }
+
+  /* Layout: topbar + content (sidebar | canvas | right) */
+  .app{
+    display:grid;
+    grid-template-rows: 56px 1fr;
+    grid-template-columns: 320px 1fr 420px;
+    height:100vh;
+    grid-template-areas:
+        "topbar topbar topbar"
+        "sidebar main   right";
+  }
+
+  .topbar{
+    grid-area: topbar; display:flex; align-items:center; gap:12px;
+    padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--grid);
+    position:sticky; top:0; z-index:2;
+  }
+  .brand{ font-weight:700; color:var(--accent); }
+  .tabs{ display:flex; gap:8px; margin-left:12px; }
+  .tab{ padding:8px 12px; border-radius:8px; cursor:pointer; color:var(--muted); }
+  .tab.active{ background:#eef2ff; color:var(--accent-2); font-weight:600; }
+  .spacer{ flex:1; }
+  .btn{
+    padding:8px 12px; background:var(--accent); color:#fff; border:none; border-radius:8px; cursor:pointer;
+  }
+  .btn.secondary{ background:#e5e7eb; color:#111827; }
+  .btn.danger{ background:var(--danger); }
+
+  .sidebar{
+    grid-area: sidebar; background:var(--panel); border-right:1px solid var(--grid);
+    overflow:auto; padding:12px; min-height:0;
+  }
+  .panel{
+    background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:12px; margin-bottom:12px;
+  }
+  .toolbar button{
+    width:100%; margin-bottom:8px; border-radius:8px; border:1px solid var(--grid);
+    background:#f9fafb; padding:10px; cursor:pointer; text-align:left;
+  }
+  .toolbar button.active{
+    background:#eef2ff; border-color:#c7d2fe; color:#1d4ed8; /* color-only, no bold */
+  }
+  .legend{ color:var(--muted); font-size:12px; margin-top:8px; }
+
+  .main{
+    grid-area: main; display:grid; grid-template-rows: 1fr; padding:12px; min-height:0;
+  }
+  .canvas-wrap{
+    background:var(--panel); border:1px solid var(--grid); border-radius:12px; position:relative; overflow:hidden;
+  }
+  .canvas-header{
+    position:absolute; top:8px; left:8px; background:#ffffffcc; padding:6px 10px; border-radius:8px; border:1px solid var(--grid); font-size:12px;
+    z-index:1;
+  }
+  svg{
+    width:100%; height:100%;
+    background-image: linear-gradient(to right, transparent 0 39px, var(--grid) 39px 40px),
+                      linear-gradient(to bottom, transparent 0 39px, var(--grid) 39px 40px);
+    background-size:40px 40px; background-position:0 0;
+    cursor: default; /* switches to grabbing during background pan */
+  }
+
+  /* Drawing styles */
+  .segment{ stroke:#334155; stroke-width:3; }
+  .service{ stroke:#60a5fa; stroke-width:2; stroke-dasharray:6 4; }
+  .node circle{ fill:#fff; stroke:#64748b; stroke-width:2; }
+  .house rect{ fill:#fff; stroke:#2563eb; stroke-width:2; }
+
+  /* Selected highlighting (color-only, thicker) */
+  .selected .segment{ stroke: var(--select) !important; stroke-width:4 !important; }
+  .selected .service{ stroke: var(--select) !important; stroke-width:3.5 !important; stroke-dasharray:none !important; }
+  .selected .node circle{ stroke: var(--select) !important; stroke-width:3 !important; }
+  .selected polygon{ stroke: var(--select) !important; stroke-width:2.5 !important; }
+  .selected .house rect{ stroke: var(--select) !important; }
+
+  /* Right column: Results + Selected Object */
+  .right{
+    grid-area: right; display:grid; grid-template-rows: auto 1fr; gap:12px; padding:12px;
+    background:var(--panel); border-left:1px solid var(--grid); min-height:0;
+  }
+  .results{
+    border:1px solid var(--grid); border-radius:12px; padding:12px;
+  }
+  .details{
+    border:1px solid var(--grid); border-radius:12px; padding:12px; overflow:auto; min-height:0;
+  }
+
+  h3{ margin:0 0 8px 0; font-size:16px; }
+  h4{ margin:12px 0 6px 0; font-size:14px; color:#111827; }
+  .row{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  label{ font-size:12px; color:var(--muted); display:block; margin-bottom:4px; }
+  input[type="text"], input[type="number"], select{
+    width:100%; padding:8px; border:1px solid var(--grid); border-radius:8px; font-size:13px;
+    background:#fff; color:#111827;
+  }
+  .note{ font-size:12px; color:var(--muted); word-break:break-word; }
+  .kv{ font-weight:600; }
+  .pill{ display:inline-block; padding:2px 8px; font-size:12px; border-radius:999px; background:#f1f5f9; margin-right:6px; }
+  .ok{ color:var(--ok); } .warn{ color:var(--warn);} .bad{ color:var(--danger);}
+  .hidden{ display:none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand">Secondary Circuit Study</div>
+    <div class="tabs">
+      <div id="tab-designer" class="tab active">Designer</div>
+      <div id="tab-parameters" class="tab">Parameters & Library</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn secondary" id="btn-selftest">Run Self‑Test</button>
+    <button class="btn secondary" id="btn-export">Export JSON</button>
+    <label class="btn secondary" for="importFile" style="cursor:pointer;">Import JSON</label>
+    <input id="importFile" type="file" accept=".json" class="hidden" />
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="panel">
+      <h3>Toolbar</h3>
+      <div class="toolbar">
+        <button id="tool-select" class="active">Select / Move</button>
+        <button id="tool-segment">Add Secondary Segment</button>
+        <button id="tool-house">Add House (Service)</button>
+        <button id="tool-add-xfmr" class="secondary">Add Transformer</button>
+        <button id="tool-delete" style="color:var(--danger)">Delete Selected</button>
+      </div>
+      <div class="legend">
+        <div><span class="pill">Dark line</span> Secondary main</div>
+        <div><span class="pill">Blue dash</span> House service</div>
+        <div><span class="pill">Red triangle</span> Transformer</div>
+        <div><span class="pill" style="background:#dbeafe;color:#1e40af">Blue box</span> House (name wraps)</div>
+      </div>
+    </div>
+
+    <!-- Parameters tab -->
+    <div class="panel" id="parameters-panel" style="display:none">
+      <h3>System Parameters</h3>
+      <div class="row">
+        <div><label>Primary nominal (V)</label><input id="primaryNomV" type="number" step="1" /></div>
+        <div><label>Secondary nominal (V)</label><input id="secondaryNomV" type="number" step="1" /></div>
+      </div>
+      <div class="row">
+        <div><label>Primary actual (V)</label><input id="primaryActualV" type="number" step="0.1" /></div>
+        <div><label>Secondary no‑load target (V)</label><input id="secondaryNoLoadV" type="number" step="0.1" /></div>
+      </div>
+
+      <h4>Transformer</h4>
+      <div class="row">
+        <div><label>Size (kVA)</label><select id="xfmrSize"></select></div>
+        <div><label>%Z (typical)</label><input id="xfmrPercentZ" type="number" step="0.1" /></div>
+      </div>
+      <div class="row">
+        <div><label>X/R ratio</label><input id="xfmrXR" type="number" step="0.1" /></div>
+        <div><label>Connection</label>
+          <select id="xfmrConn">
+            <option>1‑ph 120/240</option>
+            <option>1‑ph 120</option>
+            <option>1‑ph 240</option>
+            <option>3‑ph (treated as 1‑ph equivalent)</option>
+          </select>
+        </div>
+      </div>
+
+      <h4>Coincidence</h4>
+      <div class="row">
+        <div><label>Global coincidence factor</label><input id="globalCF" type="number" min="0" max="1" step="0.01" /></div>
+        <div><label>Default PF (lag)</label><input id="defaultPF" type="number" min="0.1" max="1" step="0.01" /></div>
+      </div>
+
+      <h4>Conductor Library (Ω/kft @ operating temp)</h4>
+      <div class="note">Edit or add sizes. Use your standards data where available.</div>
+      <div id="condList"></div>
+      <button id="addConductor" class="btn secondary" style="margin-top:8px;">Add Conductor Type</button>
+    </div>
+
+    <!-- Designer help -->
+    <div class="panel" id="designer-panel">
+      <h3>Designer Tips</h3>
+      <ul class="note">
+        <li><b>Add Secondary Segment:</b> click a node to start; click another node to connect; click background to add a new intermediate node; repeat as needed.</li>
+        <li>With a node selected (e.g., transformer) you can click background to create one‑off spans from that node repeatedly.</li>
+        <li><b>Add House:</b> click near the node to attach. Drag nodes/houses to reposition; lengths recompute automatically.</li>
+        <li>Background: drag to pan • wheel to zoom (anchored to pointer).</li>
+      </ul>
+      <h4>Quick Settings</h4>
+      <div class="row">
+        <div><label>Default Secondary Conductor</label><select id="defaultSecConductor"></select></div>
+        <div><label>Default Service Conductor</label><select id="defaultSvcConductor"></select></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Center: canvas -->
+  <div class="main">
+    <div class="canvas-wrap">
+      <div class="canvas-header">Drag background to pan. Scroll to zoom.</div>
+      <svg id="canvas"></svg>
+    </div>
+  </div>
+
+  <!-- Right: Results + Selected Object -->
+  <div class="right">
+    <div class="results">
+      <h3>System Results</h3>
+      <div id="resultsSummary" class="note">Waiting for model...</div>
+    </div>
+    <div class="details">
+      <h3>Selected Object</h3>
+      <div id="detailsPanel" class="note">Select a transformer node, segment, or house to edit properties.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/** ============================
+ *  Utilities & complex math
+ *  ============================ */
+const uid = () => Math.random().toString(36).slice(2,9);
+const clamp = (v,min,max) => Math.max(min, Math.min(max, v));
+const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+const kft = ft => ft/1000;
+
+function c(re, im){ return {re, im}; }
+function cadd(a,b){ return c(a.re+b.re, a.im+b.im); }
+function csub(a,b){ return c(a.re-b.re, a.im-b.im); }
+function cmul(a,b){ return c(a.re*b.re - a.im*b.im, a.re*b.im + a.im*b.re); }
+function cdiv(a,b){ const d=b.re*b.re + b.im*b.im || 1e-12; return c((a.re*b.re + a.im*b.im)/d, (a.im*b.re - a.re*b.im)/d); }
+function cconj(a){ return c(a.re, -a.im); }
+function cabs(a){ return Math.hypot(a.re, a.im); }
+
+const kx = c(1000, 0);
+function kWtoW(S){ return cmul(S, kx); }
+function to_kW(ZW){ return c(ZW.re/1000, ZW.im/1000); }
+
+/** ============================
+ *  Pan & Zoom (SVG viewBox)
+ *  ============================ */
+const canvas = document.getElementById('canvas');
+let VB_BASE = {w: 0, h: 0};
+let vb      = {x: 0, y: 0, w: 0, h: 0};
+
+function initViewBox(){
+  const rect = canvas.getBoundingClientRect();
+  VB_BASE = {w: rect.width || 900, h: rect.height || 500};
+  if (vb.w === 0 || vb.h === 0) vb = {x: 0, y: 0, w: VB_BASE.w, h: VB_BASE.h};
+  canvas.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}
+initViewBox();
+window.addEventListener('resize', ()=>{
+  const prev = {...vb};
+  initViewBox();
+  vb = prev;
+  canvas.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+});
+function svgCoords(evt){
+  const rect = canvas.getBoundingClientRect();
+  const px = evt.clientX - rect.left;
+  const py = evt.clientY - rect.top;
+  return {
+    x: vb.x + (px/rect.width)  * vb.w,
+    y: vb.y + (py/rect.height) * vb.h
+  };
+}
+let panDrag = null;
+canvas.addEventListener('contextmenu', e => e.preventDefault()); // UX: avoid context menu
+
+canvas.addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const wx = vb.x + (px/rect.width)  * vb.w;
+  const wy = vb.y + (py/rect.height) * vb.h;
+  const factor = (e.deltaY < 0) ? 0.9 : 1.1;
+  const newW = clamp(vb.w * factor, VB_BASE.w*0.25, VB_BASE.w*5.0);
+  const newH = clamp(vb.h * factor, VB_BASE.h*0.25, VB_BASE.h*5.0);
+  vb = {
+    x: wx - (px/rect.width)  * newW,
+    y: wy - (py/rect.height) * newH,
+    w: newW, h: newH
+  };
+  canvas.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+}, {passive:false});
+
+/** ============================
+ *  Model
+ *  ============================ */
+const defaultConductorLib = [
+  { id: uid(), name: '4/0 Al Triplex (OH)', R_ohm_kft: 0.160, X_ohm_kft: 0.080, ampacity: 230 },
+  { id: uid(), name: '1/0 Al Triplex (OH)', R_ohm_kft: 0.321, X_ohm_kft: 0.085, ampacity: 170 },
+  { id: uid(), name: '#2 Al Triplex (OH)',  R_ohm_kft: 0.513, X_ohm_kft: 0.090, ampacity: 135 },
+  { id: uid(), name: '4/0 Cu (UG)',        R_ohm_kft: 0.049, X_ohm_kft: 0.040, ampacity: 260 },
+  { id: uid(), name: '#2 Cu (UG)',         R_ohm_kft: 0.156, X_ohm_kft: 0.040, ampacity: 150 },
+];
+const defaultXfmrs = [
+  {kva:15, percentZ:2.0, XR:7},
+  {kva:25, percentZ:2.0, XR:7},
+  {kva:37.5, percentZ:2.5, XR:7},
+  {kva:50, percentZ:2.5, XR:7},
+  {kva:75, percentZ:3.0, XR:7},
+  {kva:100, percentZ:3.5, XR:7},
+  {kva:167, percentZ:4.0, XR:7}
+];
+
+const model = {
+  primaryNomV: 7200,
+  primaryActualV: 7200,
+  secondaryNomV: 240,
+  secondaryNoLoadV: 240,
+  transformer: { kva:25, percentZ:2.0, XR:7, connection:'1‑ph 120/240' },
+  globalCF: 0.70,
+  defaultPF: 0.97,
+  conductors: JSON.parse(JSON.stringify(defaultConductorLib)),
+  nodes: [],
+  segments: [],
+  services: [],
+  defaults: { secondaryCondId: null, serviceCondId: null },
+  calc: { results: null }
+};
+model.defaults.secondaryCondId = model.conductors[0].id;
+model.defaults.serviceCondId   = model.conductors[2].id;
+
+function canvasSize(){ const r = canvas.getBoundingClientRect(); return {w:r.width||800, h:r.height||500}; }
+function createXfmrNode(){
+  const {w,h} = canvasSize();
+  const xf = { id: uid(), type:'xfmr', name:'XFMR', x:w*0.25, y:h*0.5 };
+  model.nodes.push(xf);
+}
+createXfmrNode();
+
+/** ============================
+ *  UI references
+ *  ============================ */
+const tabDesigner = document.getElementById('tab-designer');
+const tabParameters = document.getElementById('tab-parameters');
+const designerPanel = document.getElementById('designer-panel');
+const parametersPanel = document.getElementById('parameters-panel');
+tabDesigner.onclick = ()=>{ tabDesigner.classList.add('active'); tabParameters.classList.remove('active'); designerPanel.style.display='block'; parametersPanel.style.display='none'; };
+tabParameters.onclick = ()=>{ tabParameters.classList.add('active'); tabDesigner.classList.remove('active'); designerPanel.style.display='none'; parametersPanel.style.display='block'; };
+
+const toolSelect = document.getElementById('tool-select');
+const toolSegment = document.getElementById('tool-segment');
+const toolHouse = document.getElementById('tool-house');
+const toolDelete = document.getElementById('tool-delete');
+const toolAddXfmr = document.getElementById('tool-add-xfmr');
+let tool = 'select';
+function setTool(t){
+  tool = t;
+  [toolSelect, toolSegment, toolHouse].forEach(b=>b.classList.remove('active'));
+  if (t==='select')  toolSelect.classList.add('active');
+  if (t==='segment') toolSegment.classList.add('active');
+  if (t==='house')   toolHouse.classList.add('active');
+}
+toolSelect.onclick  = ()=> setTool('select');
+toolSegment.onclick = ()=> setTool('segment');
+toolHouse.onclick   = ()=> setTool('house');
+toolDelete.onclick  = ()=> deleteSelected();
+toolAddXfmr.onclick = ()=>{
+  const have = model.nodes.some(n=>n.type==='xfmr');
+  if (have){ alert('A transformer already exists.'); return; }
+  createXfmrNode(); render();
+};
+
+const primaryNomV = document.getElementById('primaryNomV');
+const primaryActualV = document.getElementById('primaryActualV');
+const secondaryNomV = document.getElementById('secondaryNomV');
+const secondaryNoLoadV = document.getElementById('secondaryNoLoadV');
+const xfmrSize = document.getElementById('xfmrSize');
+const xfmrPercentZ = document.getElementById('xfmrPercentZ');
+const xfmrXR = document.getElementById('xfmrXR');
+const xfmrConn = document.getElementById('xfmrConn');
+const globalCF = document.getElementById('globalCF');
+const defaultPF = document.getElementById('defaultPF');
+const condList = document.getElementById('condList');
+const addConductorBtn = document.getElementById('addConductor');
+const resultsSummary = document.getElementById('resultsSummary');
+const detailsPanel = document.getElementById('detailsPanel');
+const defaultSecConductor = document.getElementById('defaultSecConductor');
+const defaultSvcConductor = document.getElementById('defaultSvcConductor');
+
+/** ============================
+ *  Rendering orchestration
+ *  ============================ */
+let selection = null;
+function setSelection(obj){ selection = obj; render(); }
+function requestRender(opts={skipDetails:false}){
+  try{
+    computeAndRenderResults();
+    renderCanvas();
+    if (!opts.skipDetails) renderDetails();
+  }catch(e){ console.error(e); }
+}
+function render(){
+  try{
+    renderParams();
+    renderConductorLib();
+    renderDefaultConductorSelectors();
+    renderCanvas();
+    computeAndRenderResults();
+    renderDetails();
+    updateAddXfmrButton();
+  }catch(err){
+    console.error(err);
+    resultsSummary.innerHTML = `<div class="bad">Render error: ${String(err)}</div>`;
+  }
+}
+function updateAddXfmrButton(){
+  const have = model.nodes.some(n=>n.type==='xfmr');
+  toolAddXfmr.disabled = have;
+  toolAddXfmr.title = have ? 'Transformer exists' : 'Add a transformer';
+}
+
+function renderDefaultConductorSelectors(){
+  [defaultSecConductor, defaultSvcConductor].forEach(sel => {
+    sel.innerHTML='';
+    model.conductors.forEach(c=>{
+      const o=document.createElement('option');
+      o.value=c.id; o.textContent=`${c.name}`;
+      sel.appendChild(o);
+    });
+  });
+  defaultSecConductor.value = model.defaults.secondaryCondId;
+  defaultSvcConductor.value = model.defaults.serviceCondId;
+  defaultSecConductor.onchange = ()=>{ model.defaults.secondaryCondId = defaultSecConductor.value; requestRender(); };
+  defaultSvcConductor.onchange = ()=>{ model.defaults.serviceCondId   = defaultSvcConductor.value; requestRender(); };
+}
+
+function renderParams(){
+  primaryNomV.value     = model.primaryNomV;
+  primaryActualV.value  = model.primaryActualV;
+  secondaryNomV.value   = model.secondaryNomV;
+  secondaryNoLoadV.value= model.secondaryNoLoadV;
+
+  xfmrSize.innerHTML='';
+  defaultXfmrs.forEach(x=>{
+    const o=document.createElement('option'); o.value=String(x.kva); o.textContent=`${x.kva} kVA`; xfmrSize.appendChild(o);
+  });
+  if (!defaultXfmrs.some(x=>x.kva===model.transformer.kva)){
+    const o=document.createElement('option'); o.value=String(model.transformer.kva); o.textContent=`${model.transformer.kva} kVA (custom)`; xfmrSize.appendChild(o);
+  }
+  xfmrSize.value = String(model.transformer.kva);
+  xfmrPercentZ.value = model.transformer.percentZ;
+  xfmrXR.value = model.transformer.XR;
+  xfmrConn.value = model.transformer.connection;
+  globalCF.value = model.globalCF;
+  defaultPF.value = model.defaultPF;
+
+  primaryNomV.oninput      = ()=>{ model.primaryNomV      = +primaryNomV.value;      requestRender(); };
+  primaryActualV.oninput   = ()=>{ model.primaryActualV   = +primaryActualV.value;   requestRender(); };
+  secondaryNomV.oninput    = ()=>{ model.secondaryNomV    = +secondaryNomV.value;    requestRender(); };
+  secondaryNoLoadV.oninput = ()=>{ model.secondaryNoLoadV = +secondaryNoLoadV.value; requestRender(); };
+  xfmrSize.onchange = ()=>{
+    const kv = +xfmrSize.value;
+    const f = defaultXfmrs.find(x=>x.kva===kv);
+    model.transformer.kva = kv;
+    if (f){ model.transformer.percentZ = f.percentZ; model.transformer.XR = f.XR; }
+    requestRender();
+  };
+  xfmrPercentZ.oninput = ()=>{ model.transformer.percentZ = +xfmrPercentZ.value; requestRender(); };
+  xfmrXR.oninput       = ()=>{ model.transformer.XR       = +xfmrXR.value;       requestRender(); };
+  xfmrConn.onchange    = ()=>{ model.transformer.connection= xfmrConn.value;      requestRender(); };
+  globalCF.oninput     = ()=>{ model.globalCF             = clamp(+globalCF.value,0,1); requestRender(); };
+  defaultPF.oninput    = ()=>{ model.defaultPF            = clamp(+defaultPF.value,0.1,1); requestRender(); };
+}
+
+function renderConductorLib(){
+  condList.innerHTML='';
+  model.conductors.forEach(cn=>{
+    const wrap = document.createElement('div');
+    wrap.className='panel';
+    wrap.style.margin='8px 0';
+    wrap.innerHTML = `
+      <div class="row">
+        <div><label>Name</label><input type="text" value="${cn.name}"></div>
+        <div><label>Ampacity (A)</label><input type="number" step="1" value="${cn.ampacity}"></div>
+      </div>
+      <div class="row">
+        <div><label>R (Ω/kft)</label><input type="number" step="0.001" value="${cn.R_ohm_kft}"></div>
+        <div><label>X (Ω/kft)</label><input type="number" step="0.001" value="${cn.X_ohm_kft}"></div>
+      </div>
+      <div class="note">ID: ${cn.id}</div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button class="btn secondary" data-act="dupe">Duplicate</button>
+        <button class="btn danger" data-act="del">Delete</button>
+      </div>
+    `;
+    const [nameEl, ampEl, rEl, xEl] = wrap.querySelectorAll('input');
+    nameEl.oninput = ()=>{ cn.name = nameEl.value; };
+    ampEl.oninput  = ()=>{ cn.ampacity = +ampEl.value; requestRender(); };
+    rEl.oninput    = ()=>{ cn.R_ohm_kft = +rEl.value; requestRender(); };
+    xEl.oninput    = ()=>{ cn.X_ohm_kft = +xEl.value; requestRender(); };
+    wrap.querySelector('[data-act="dupe"]').onclick = ()=>{
+      const copy = {...cn, id: uid(), name: cn.name+' (copy)'}; model.conductors.push(copy); render();
+    };
+    wrap.querySelector('[data-act="del"]').onclick = ()=>{
+      if (!confirm('Delete conductor type?')) return;
+      const idx = model.conductors.findIndex(x=>x.id===cn.id);
+      model.conductors.splice(idx,1);
+      if (model.defaults.secondaryCondId===cn.id) model.defaults.secondaryCondId = model.conductors[0]?.id || null;
+      if (model.defaults.serviceCondId===cn.id)   model.defaults.serviceCondId   = model.conductors[0]?.id || null;
+      model.segments.forEach(s=>{ if (!model.conductors.find(c=>c.id===s.condId)) s.condId = model.defaults.secondaryCondId; });
+      model.services.forEach(s=>{ if (!model.conductors.find(c=>c.id===s.condId)) s.condId = model.defaults.serviceCondId; });
+      render();
+    };
+    condList.appendChild(wrap);
+  });
+  addConductorBtn.onclick = ()=>{
+    model.conductors.push({ id: uid(), name:'New Conductor', R_ohm_kft:0.1, X_ohm_kft:0.05, ampacity:200 });
+    render();
+  };
+}
+
+/** ============================
+ *  Canvas drawing & interactions
+ *  ============================ */
+let dragState = null;
+
+/* Segment tool: chain aware + one-off from selected node */
+let segmentCreation = { active:false, lastNodeId:null };
+
+function getNodeById(id){ return model.nodes.find(n=>n.id===id); }
+function isHouse(n){ return n && n.type==='house'; }
+
+function cleanInvalidSegments(){
+  model.segments = model.segments.filter(s => getNodeById(s.from) && getNodeById(s.to));
+  model.services = model.services.filter(s => getNodeById(s.nodeId) && getNodeById(s.houseId));
+}
+function segmentLengthFt(seg){
+  const a=getNodeById(seg.from), b=getNodeById(seg.to);
+  if (!a || !b) return 0;
+  return dist(a,b);
+}
+function serviceLengthFt(svc){
+  const a=getNodeById(svc.nodeId), b=getNodeById(svc.houseId);
+  if (!a || !b) return 0;
+  return dist(a,b);
+}
+
+/* House box sizing + wrap (mostly square) */
+function houseBoxGeom(name){
+  const text = (name||'House').trim();
+  const maxLines = 2, charW=7, padX=8, lineH=12;
+  let maxChars = 12;
+  const splitLines = (s, perLine)=>{
+    const lines=[]; for(let i=0;i<s.length;i+=perLine){
+      lines.push(s.slice(i,i+perLine));
+      if (lines.length>=maxLines){ if (i+perLine<s.length) lines[lines.length-1] = lines[lines.length-1] + '…'; break; }
+    }
+    return lines;
+  };
+  let lines = splitLines(text, maxChars);
+  let widest = Math.max(...lines.map(s=>s.length), 0);
+  let w = Math.max(34, padX*2 + charW*widest);
+  let h = 24 + (lines.length>1 ? lineH : 0);
+  while (w > h*1.4 && maxChars > 8){
+    maxChars -= 2; lines = splitLines(text, maxChars);
+    widest = Math.max(...lines.map(s=>s.length), 0);
+    w = Math.max(34, padX*2 + charW*widest);
+    h = 24 + (lines.length>1 ? lineH : 0);
+  }
+  const maxW = 90; w = Math.min(w, maxW);
+  return { lines, box:{w, h} };
+}
+
+function addHouseAt(x,y){
+  let attachNode = null;
+  if (selection && selection.type==='node'){ attachNode = getNodeById(selection.id); }
+  if (!attachNode){
+    const nodes = model.nodes.filter(n=>n.type!=='house');
+    if (!nodes.length) return;
+    attachNode = nodes.reduce((best,n)=> (dist({x,y},n) < dist({x,y},best) ? n : best), nodes[0]);
+  }
+  const house = {
+    id: uid(), type:'house', name:'House',
+    x: x, y: y,
+    sqft: 2000, heating:'Gas', ev_kw:0,
+    kw_base: 5, pf: model.defaultPF, cf: model.globalCF,
+    svcCondId: model.defaults.serviceCondId
+  };
+  model.nodes.push(house);
+  model.services.push({ id: uid(), nodeId: attachNode.id, houseId: house.id, condId: house.svcCondId, angleDeg: null });
+  setSelection({type:'house', id:house.id});
+}
+
+function createSegmentToNewNode(fromNodeId, x, y){
+  const newNode = { id: uid(), type:'node', name:'N', x, y };
+  model.nodes.push(newNode);
+  model.segments.push({ id: uid(), from: fromNodeId, to: newNode.id, condId: model.defaults.secondaryCondId, angleDeg: null });
+  return newNode.id;
+}
+function createSegmentBetween(aId, bId){
+  model.segments.push({ id: uid(), from: aId, to: bId, condId: model.defaults.secondaryCondId, angleDeg: null });
+}
+
+function renderCanvas(){
+  cleanInvalidSegments();
+  canvas.innerHTML='';
+
+  /* Secondary segments (with wide invisible hit for easy selection) */
+  model.segments.forEach(seg=>{
+    const a=getNodeById(seg.from), b=getNodeById(seg.to); if (!a || !b) return;
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    const hit=document.createElementNS('http://www.w3.org/2000/svg','line');
+    hit.setAttribute('x1', a.x); hit.setAttribute('y1', a.y);
+    hit.setAttribute('x2', b.x); hit.setAttribute('y2', b.y);
+    hit.setAttribute('stroke', '#000'); hit.setAttribute('opacity','0.001');
+    hit.setAttribute('stroke-width', '18'); hit.setAttribute('pointer-events','stroke');
+    g.appendChild(hit);
+
+    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+    line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+    line.classList.add('segment');
+    g.appendChild(line);
+
+    if (selection && selection.type==='segment' && selection.id===seg.id) g.classList.add('selected');
+
+    const selectHandler = (e)=>{ e.stopPropagation(); setSelection({type:'segment', id:seg.id}); /* do not change tool here */ };
+    hit.onmousedown = selectHandler;
+    line.onmousedown= selectHandler;
+
+    canvas.appendChild(g);
+  });
+
+  /* Services (wide hit) */
+  model.services.forEach(svc=>{
+    const n=getNodeById(svc.nodeId), h=getNodeById(svc.houseId); if (!n||!h) return;
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    const hit=document.createElementNS('http://www.w3.org/2000/svg','line');
+    hit.setAttribute('x1', n.x); hit.setAttribute('y1', n.y);
+    hit.setAttribute('x2', h.x); hit.setAttribute('y2', h.y);
+    hit.setAttribute('stroke', '#000'); hit.setAttribute('opacity','0.001');
+    hit.setAttribute('stroke-width', '18'); hit.setAttribute('pointer-events','stroke');
+    g.appendChild(hit);
+
+    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', n.x); line.setAttribute('y1', n.y);
+    line.setAttribute('x2', h.x); line.setAttribute('y2', h.y);
+    line.classList.add('service');
+    g.appendChild(line);
+
+    if (selection && selection.type==='service' && selection.id===svc.id) g.classList.add('selected');
+
+    const selectHandler = (e)=>{ e.stopPropagation(); setSelection({type:'service', id:svc.id}); };
+    hit.onmousedown = selectHandler;
+    line.onmousedown= selectHandler;
+
+    canvas.appendChild(g);
+  });
+
+  /* Nodes & Houses */
+  model.nodes.forEach(n=>{
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    if (isHouse(n)){
+      g.classList.add('house');
+      const {lines, box} = houseBoxGeom(n.name);
+      const r=document.createElementNS('http://www.w3.org/2000/svg','rect');
+      r.setAttribute('x', n.x - box.w/2); r.setAttribute('y', n.y - box.h/2);
+      r.setAttribute('width', box.w); r.setAttribute('height', box.h); r.setAttribute('rx',4);
+      r.setAttribute('fill','#fff'); r.setAttribute('stroke','#2563eb'); r.setAttribute('stroke-width','2');
+      g.appendChild(r);
+      lines.forEach((ln,i)=>{
+        const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+        const baseY = n.y + (lines.length>1 ? (-4) : 4);
+        t.setAttribute('x', n.x); t.setAttribute('y', baseY + i*12);
+        t.setAttribute('text-anchor','middle'); t.setAttribute('font-size','10'); t.setAttribute('fill','#1e40af');
+        t.textContent = ln || '';
+        g.appendChild(t);
+      });
+    } else {
+      if (n.type==='xfmr'){
+        const tri=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+        const size=10;
+        const p1 = `${n.x},${n.y-size}`;
+        const p2 = `${n.x-size},${n.y+size}`;
+        const p3 = `${n.x+size},${n.y+size}`;
+        tri.setAttribute('points', `${p1} ${p2} ${p3}`);
+        tri.setAttribute('fill', '#ef4444'); tri.setAttribute('stroke', '#7f1d1d'); tri.setAttribute('stroke-width','1.5');
+        g.appendChild(tri);
+      } else {
+        const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        c.setAttribute('cx', n.x); c.setAttribute('cy', n.y); c.setAttribute('r', 6);
+        c.setAttribute('fill','#fff'); c.setAttribute('stroke','#64748b'); c.setAttribute('stroke-width','2');
+        g.appendChild(c);
+      }
+    }
+
+    if (selection && selection.type==='node' && selection.id===n.id) g.classList.add('selected');
+    if (selection && selection.type==='house' && selection.id===n.id) g.classList.add('selected');
+
+    g.onmousedown = (e)=>{
+      e.stopPropagation();
+      const p = svgCoords(e);
+
+      if (tool === 'segment') {
+        // SEGMENT TOOL: click node to start/continue chain — do NOT switch tools
+        if (!segmentCreation.active){
+          segmentCreation.active = true;
+          segmentCreation.lastNodeId = n.id;
+          setSelection(isHouse(n) ? {type:'house', id:n.id} : {type:'node', id:n.id});
+        } else {
+          model.segments.push({
+            id: uid(),
+            from: segmentCreation.lastNodeId,
+            to: n.id,
+            condId: model.defaults.secondaryCondId,
+            angleDeg: null
+          });
+          segmentCreation.lastNodeId = n.id; // continue chaining
+          requestRender();
+        }
+        return;
+      }
+
+      // SELECT/MOVE: select and start drag
+      if (tool === 'select'){
+        setSelection(isHouse(n) ? {type:'house', id:n.id} : {type:'node', id:n.id});
+        dragState = { id:n.id, dx: n.x - p.x, dy: n.y - p.y };
+      }
+    };
+    canvas.appendChild(g);
+  });
+
+  /* Background interactions: panning, segment/houses */
+  canvas.onmousedown = (e)=>{
+    const p = svgCoords(e);
+
+    if (tool==='segment'){
+      const nearNode = model.nodes.find(n=> !isHouse(n) && Math.hypot(n.x-p.x, n.y-p.y) < 16);
+
+      if (nearNode){
+        if (!segmentCreation.active){
+          segmentCreation.active = true;
+          segmentCreation.lastNodeId = nearNode.id;
+          setSelection({type:'node', id:nearNode.id});
+        } else {
+          model.segments.push({
+            id: uid(),
+            from: segmentCreation.lastNodeId,
+            to: nearNode.id,
+            condId: model.defaults.secondaryCondId,
+            angleDeg: null
+          });
+          segmentCreation.lastNodeId = nearNode.id;
+          requestRender();
+        }
+        return;
+      }
+
+      // Blank background: chain adds a new node; else one-off from selected node (e.g., transformer)
+      if (segmentCreation.active){
+        const newNode = { id: uid(), type:'node', name:'N', x:p.x, y:p.y };
+        model.nodes.push(newNode);
+        model.segments.push({
+          id: uid(),
+          from: segmentCreation.lastNodeId,
+          to: newNode.id,
+          condId: model.defaults.secondaryCondId,
+          angleDeg: null
+        });
+        segmentCreation.lastNodeId = newNode.id;
+        requestRender();
+      } else {
+        let startNode = null;
+        if (selection && selection.type === 'node') startNode = getNodeById(selection.id);
+        if (!startNode) startNode = model.nodes.find(n=>n.type==='xfmr');
+        if (!startNode){ alert('Select a node or add a transformer first.'); return; }
+
+        const newNode = { id: uid(), type:'node', name:'N', x:p.x, y:p.y };
+        model.nodes.push(newNode);
+        model.segments.push({
+          id: uid(),
+          from: startNode.id,
+          to: newNode.id,
+          condId: model.defaults.secondaryCondId,
+          angleDeg: null
+        });
+        setSelection({ type:'node', id: startNode.id }); // allow repeated one-offs
+        requestRender();
+      }
+      return;
+    }
+
+    if (tool==='house'){
+      addHouseAt(p.x, p.y);
+      segmentCreation.active=false;
+      requestRender();
+      return;
+    }
+
+    if (tool==='select' && !dragState){
+      const rect = canvas.getBoundingClientRect();
+      panDrag = { startX:e.clientX, startY:e.clientY, x0:vb.x, y0:vb.y, w:rect.width, h:rect.height };
+      canvas.style.cursor = 'grabbing';
+    }
+  };
+
+  canvas.onmousemove = (e)=>{
+    if (dragState){
+      const p = svgCoords(e);
+      const n = getNodeById(dragState.id);
+      if (!n) return;
+
+      // Move dragged node/house
+      n.x = p.x + dragState.dx;
+      n.y = p.y + dragState.dy;
+
+      /* NEW: Update angle field live when dragging, for selected segment/service */
+      const angDegFn = (A,B)=> Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI;
+
+      if (selection){
+        if (selection.type === 'segment'){
+          const seg = model.segments.find(s=>s.id===selection.id);
+          if (seg){
+            const topo = buildTopology();
+            let up = seg.from, down = seg.to;
+            if (topo.parent[seg.to] === seg.from) { up = seg.from; down = seg.to; }
+            else if (topo.parent[seg.from] === seg.to) { up = seg.to; down = seg.from; }
+            const A = getNodeById(up), B = getNodeById(down);
+            if (A && B){
+              seg.angleDeg = angDegFn(A,B);
+              const angEl = document.getElementById('segAng');
+              if (angEl && document.activeElement !== angEl) angEl.value = Math.round(seg.angleDeg);
+            }
+          }
+        }
+        if (selection.type === 'service'){
+          const svc = model.services.find(s=>s.id===selection.id);
+          if (svc){
+            const A = getNodeById(svc.nodeId), B = getNodeById(svc.houseId);
+            if (A && B){
+              svc.angleDeg = angDegFn(A,B);
+              const angEl = document.getElementById('svcAng');
+              if (angEl && document.activeElement !== angEl) angEl.value = Math.round(svc.angleDeg);
+            }
+          }
+        }
+      }
+      /* END angle update */
+
+      renderCanvas();
+      computeAndRenderResults();
+      // keep details intact to avoid caret jump
+      return;
+    }
+
+    if (panDrag){
+      const dx = e.clientX - panDrag.startX, dy = e.clientY - panDrag.startY;
+      vb.x = panDrag.x0 + ( -dx / panDrag.w * vb.w );
+      vb.y = panDrag.y0 + ( -dy / panDrag.h * vb.h );
+      canvas.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+    }
+  };
+
+  window.onmouseup = ()=>{
+    dragState=null;
+    if (panDrag){ panDrag=null; canvas.style.cursor='default'; }
+  };
+}
+
+/** ============================
+ *  Keyboard: Delete selected
+ *  ============================ */
+document.addEventListener('keydown', (e)=>{
+  if (e.key === 'Delete'){ deleteSelected(); }
+});
+
+/** ============================
+ *  Delete selected
+ *  ============================ */
+function deleteSelected(){
+  if (!selection) return;
+  const {type, id} = selection;
+  if (type==='house'){
+    const idx = model.nodes.findIndex(n=>n.id===id); if (idx>=0) model.nodes.splice(idx,1);
+    model.services = model.services.filter(s=>s.houseId!==id);
+  }
+  if (type==='node'){
+    const n = getNodeById(id); if (!n) return;
+    if (n.type==='xfmr'){ alert('Cannot delete transformer node.'); return; }
+    const attachedSegs = model.segments.filter(s=>s.from===id || s.to===id);
+    if (attachedSegs.length>0 && !confirm('Delete node and attached segments?')) return;
+    model.segments = model.segments.filter(s=>s.from!==id && s.to!==id);
+    model.services = model.services.filter(s=>s.nodeId!==id);
+    const idx = model.nodes.findIndex(nn=>nn.id===id); if (idx>=0) model.nodes.splice(idx,1);
+  }
+  if (type==='segment'){ model.segments = model.segments.filter(s=>s.id!==id); }
+  if (type==='service'){ model.services = model.services.filter(s=>s.id!==id); }
+  cleanInvalidSegments(); selection=null; render();
+}
+
+/** ============================
+ *  Calculation Engine (unit-correct)
+ *  ============================ */
+function getConductor(condId){ return model.conductors.find(c=>c.id===condId) || model.conductors[0]; }
+function xfmrZohm(){
+  const kVA = model.transformer.kva || 1;
+  const V = model.secondaryNomV || 240;
+  const Zbase = (V*V)/(kVA*1000);
+  const Zpu = (model.transformer.percentZ||2)/100;
+  const k = model.transformer.XR||7;
+  const Rpu = Zpu/Math.sqrt(1+k*k);
+  const Xpu = k*Rpu;
+  return c(Rpu*Zbase, Xpu*Zbase);
+}
+function buildTopology(){
+  cleanInvalidSegments();
+  const xf = model.nodes.find(n=>n.type==='xfmr');
+  const adj = {}; model.nodes.forEach(n=> adj[n.id] = []);
+  model.segments.forEach(s=>{
+    if (adj[s.from] && adj[s.to]){
+      adj[s.from].push({to:s.to, id:s.id});
+      adj[s.to].push({to:s.from, id:s.id});
+    }
+  });
+  if (!xf) return {xf:null, adj:{}, parent:{}, order:[], children:{}};
+  const parent = { [xf.id]: null };
+  const order = [xf.id];
+  for (let i=0;i<order.length;i++){
+    const u = order[i];
+    for (const e of adj[u]||[]){
+      if (!(e.to in parent)){
+        parent[e.to] = u; order.push(e.to);
+      }
+    }
+  }
+  const children = {}; Object.keys(parent).forEach(id=> children[id]=[]);
+  Object.keys(parent).forEach(id=>{ const p = parent[id]; if (p) children[p].push(id); });
+  return {xf, adj, parent, order, children};
+}
+function sumComplex(arr){ return arr.reduce((acc,z)=> c(acc.re+z.re, acc.im+z.im), c(0,0)); }
+function houseDemand(h){
+  const ev_kw = +h.ev_kw || 0;
+  const perHouseCF = (typeof h.cf==='number') ? h.cf : model.globalCF;
+  const kw = ((h.kw_base ?? 5) * perHouseCF) + ev_kw;
+  const pf = clamp(h.pf || model.defaultPF, 0.1, 1.0);
+  const phi = Math.acos(pf);
+  const kvar = kw * Math.tan(phi);
+  return c(kw, kvar); // kW+jkVAR
+}
+function serviceZ(houseId){
+  const svc = model.services.find(s=>s.houseId===houseId);
+  if (!svc) return c(0,0);
+  const cnd = getConductor(svc.condId);
+  const L = kft(serviceLengthFt(svc));
+  return c((cnd.R_ohm_kft||0) * L, (cnd.X_ohm_kft||0) * L);
+}
+function segmentZ(seg){
+  const cnd = getConductor(seg.condId);
+  const L = kft(segmentLengthFt(seg));
+  return c((cnd.R_ohm_kft||0) * L, (cnd.X_ohm_kft||0) * L);
+}
+
+function compute(){
+  const topo = buildTopology();
+  const {xf, parent, order, children} = topo;
+  if (!xf) return { ok:false, msg:'No transformer. Use “Add Transformer”.' };
+
+  const V0 = model.secondaryNoLoadV || 240;
+  const Vnode = {}; Object.keys(parent).forEach(id=> Vnode[id] = c(V0, 0));
+
+  const housesByNode = {}; Object.keys(parent).forEach(id=> housesByNode[id]=[]);
+  model.services.forEach(s=>{
+    if (housesByNode[s.nodeId]){
+      const h = model.nodes.find(n=>n.id===s.houseId);
+      if (h) housesByNode[s.nodeId].push(h);
+    }
+  });
+
+  const Zxf = xfmrZohm();
+
+  const Niter=12; const eps=1e-3;
+  let Ixf_prev = c(0,0);
+  let Sdown = {};
+  for (let it=0; it<Niter; it++){
+    Sdown = {};
+    Object.keys(children).forEach(nid=>{
+      const hs = housesByNode[nid]||[];
+      Sdown[nid] = sumComplex(hs.map(h=> houseDemand(h)));
+    });
+
+    const postorder = order.slice().reverse();
+    for (const u of postorder){
+      for (const v of (children[u]||[])){
+        const seg = model.segments.find(s => (s.from===u && s.to===v) || (s.from===v && s.to===u));
+        const Zv = seg? segmentZ(seg) : c(0,0);
+        const Vu = Vnode[u] || c(V0,0);
+        const Sd_v = Sdown[v] || c(0,0);
+        const Iv = cdiv( cconj( kWtoW(Sd_v) ), Vu ); // A
+        const I2Z = cmul( Iv, cmul(Iv, Zv) );        // W+jvar
+        const I2Z_kW = to_kW(I2Z);                   // kW+jkvar
+        Sdown[u] = cadd( Sdown[u] || c(0,0), cadd(Sd_v, I2Z_kW) );
+      }
+    }
+
+    const Sxf = Sdown[xf.id] || c(0,0);
+    const Vxf_nl = c(V0, 0);
+    const Ixf = cdiv( cconj( kWtoW(Sxf) ), Vxf_nl ); // A
+    const Vxf = csub( Vxf_nl, cmul(Ixf, Zxf) );
+    Vnode[xf.id] = Vxf;
+
+    for (const u of order){
+      const Vu = Vnode[u];
+      for (const v of (children[u]||[])){
+        const seg = model.segments.find(s => (s.from===u && s.to===v) || (s.from===v && s.to===u));
+        const Zv = seg? segmentZ(seg) : c(0,0);
+        const Sd_v = Sdown[v] || c(0,0);
+        const Iv = cdiv( cconj( kWtoW(Sd_v) ), Vu ); // A
+        const Vv = csub(Vu, cmul(Iv, Zv));
+        Vnode[v] = Vv;
+      }
+    }
+
+    const dI = Math.abs(cabs(Ixf) - cabs(Ixf_prev));
+    Ixf_prev = Ixf;
+    if (dI < eps) break;
+  }
+
+  const houseVolt = {};
+  Object.keys(housesByNode).forEach(nodeId=>{
+    const nodeV = Vnode[nodeId] || c(V0,0);
+    (housesByNode[nodeId]||[]).forEach(h=>{
+      const Zs = serviceZ(h.id);
+      const S  = houseDemand(h);
+      const Ih = cdiv( cconj( kWtoW(S) ), nodeV ); // A
+      const Vh = csub(nodeV, cmul(Ih, Zs));
+      houseVolt[h.id] = Vh;
+    });
+  });
+
+  const Vbase = V0;
+  let worst = { houseId:null, dropPct:0, Vmin:V0 };
+  const housesReachable = Object.values(housesByNode).flat();
+  if (housesReachable.length){
+    worst = { houseId:null, dropPct:-Infinity, Vmin:Infinity };
+    housesReachable.forEach(h=>{
+      const Vh = houseVolt[h.id] || c(Vnode[xf.id].re, Vnode[xf.id].im);
+      const mag = cabs(Vh);
+      const dropPct = ((Vbase - mag)/Vbase)*100;
+      if (dropPct > worst.dropPct){ worst = { houseId:h.id, dropPct, Vmin:mag }; }
+    });
+  }
+
+  const Sxf = (Sdown[xf.id] || c(0,0));
+  const Sxf_kVA = Math.hypot(Sxf.re, Sxf.im);
+  const Ixf_A   = (Sxf_kVA*1000) / (V0 || 1);
+
+  const segAmps = model.segments.map(seg=>{
+    const aIn = parent.hasOwnProperty(seg.from);
+    const bIn = parent.hasOwnProperty(seg.to);
+    if (!aIn || !bIn) return { id:seg.id, amp:0, ampacity:getConductor(seg.condId).ampacity||9999, pct:0 };
+    let parentNode, childNode;
+    if (parent[seg.to] === seg.from){ parentNode = seg.from; childNode = seg.to; }
+    else if (parent[seg.from] === seg.to){ parentNode = seg.to; childNode = seg.from; }
+    else { parentNode = seg.from; childNode = seg.to; }
+    const Sd = Sdown[childNode] || c(0,0);
+    const Va = Vnode[parentNode] || c(V0,0);
+    const I  = cabs( cdiv( cconj( kWtoW(Sd) ), Va ) ); // A
+    const ampacity = getConductor(seg.condId).ampacity || 9999;
+    return { id:seg.id, amp:I, ampacity, pct:(I/ampacity)*100 };
+  });
+
+  const svcAmps = model.services.map(s=>{
+    const inTree = parent.hasOwnProperty(s.nodeId);
+    const ampacity = getConductor(s.condId).ampacity || 9999;
+    if (!inTree) return { id:s.id, amp:0, ampacity, pct:0 };
+    const h = model.nodes.find(n=>n.id===s.houseId);
+    const Vh = houseVolt[h.id] || c(V0,0);
+    const Sh = houseDemand(h);
+    const I  = cabs( cdiv( cconj( kWtoW(Sh) ), Vh ) ); // A
+    return { id:s.id, amp:I, ampacity, pct:(I/ampacity)*100 };
+  });
+
+  return {
+    ok:true, Vnode, houseVolt, Vbase,
+    worst, segAmps, svcAmps,
+    xfmr: { S_kVA:Sxf_kVA, I_A:Ixf_A, Z:c(Zxf.re, Zxf.im) },
+    Sdown, parent, children
+  };
+}
+
+function fmt(n, d=2){ return (Number.isFinite(n)? n : 0).toFixed(d); }
+function badge(val, good, warn){
+  let cls='ok'; if (val>=warn) cls='bad'; else if (val>=good) cls='warn';
+  return `<span class="pill ${cls}">${fmt(val,1)}%</span>`;
+}
+
+function computeAndRenderResults(){
+  try{
+    const R = compute();
+    if (!R.ok){ resultsSummary.innerHTML = `<div class="bad">${R.msg}</div>`; return; }
+
+    const haveHouses = Object.keys(R.houseVolt||{}).length>0;
+    const worstDrop  = haveHouses ? Math.max(0, R.worst.dropPct||0) : 0;
+    const xfmrPct    = (R.xfmr.S_kVA / (model.transformer.kva||1))*100;
+    const maxSegPct  = (R.segAmps.reduce((m,s)=> Math.max(m, s.pct), 0) || 0);
+    const maxSvcPct  = (R.svcAmps.reduce((m,s)=> Math.max(m, s.pct), 0) || 0);
+
+    const loLimit = model.secondaryNomV * 0.95;
+    const hiLimit = model.secondaryNomV * 1.05;
+    const Vmin    = haveHouses ? (R.worst.Vmin || model.secondaryNomV) : null;
+    const worstHouseName = haveHouses && R.worst.houseId ? (getNodeById(R.worst.houseId)?.name || '—') : '—';
+
+    resultsSummary.innerHTML = `
+      <div class="row">
+        <div>
+          <div><b>Transformer loading</b>: ${fmt(R.xfmr.S_kVA,1)} kVA / ${model.transformer.kva} kVA → ${badge(xfmrPct, 80, 100)}</div>
+          <div class="${(Vmin!==null && Vmin<loLimit)?'bad':''}">
+            <b>Minimum house voltage</b>: ${Vmin===null ? '—' : `${fmt(Vmin,1)} V`} ${Vmin===null?'':`(limit ${fmt(loLimit,0)}–${fmt(hiLimit,0)} V)`}
+          </div>
+          <div><b>Worst secondary drop</b>: ${fmt(worstDrop,2)}% &nbsp;<span class="note">(${worstHouseName})</span></div>
+        </div>
+        <div>
+          <div><b>Max segment ampacity</b>: ${fmt(maxSegPct,1)}%</div>
+          <div><b>Max service ampacity</b>: ${fmt(maxSvcPct,1)}%</div>
+          <div class="note">${haveHouses?'':'Add houses and segments to see detailed results.'}</div>
+        </div>
+      </div>`;
+    model.calc.results = R;
+  }catch(err){
+    console.error(err);
+    resultsSummary.innerHTML = `<div class="bad">Computation error: ${String(err)}</div>`;
+  }
+}
+
+/** ============================
+ *  Selected Object (right panel)
+ *  ============================ */
+function renderDetails(){
+  detailsPanel.innerHTML = '';
+  const R = model.calc.results || compute();
+  if (!selection){
+    detailsPanel.innerHTML = '<div class="note">Select an object to edit its properties.</div>'; return;
+  }
+  if (!R.ok){ detailsPanel.innerHTML = `<div class="bad">${R.msg}</div>`; return; }
+
+  function segmentUpDown(seg){
+    const p = buildTopology().parent;
+    if (p[seg.to] === seg.from) return {up: seg.from, down: seg.to};
+    if (p[seg.from] === seg.to) return {up: seg.to, down: seg.from};
+    return {up: seg.from, down: seg.to};
+  }
+  function angleDegFromNodes(up, down){
+    const A = getNodeById(up), B = getNodeById(down);
+    if (!A || !B) return 0;
+    const dx = B.x - A.x, dy = B.y - A.y;
+    return Math.atan2(dy, dx) * 180 / Math.PI;
+  }
+
+  /* Segment details */
+  if (selection.type==='segment'){
+    const seg = model.segments.find(s=>s.id===selection.id);
+    if (!seg){ detailsPanel.innerHTML='Not found.'; return; }
+    const lenFt = segmentLengthFt(seg);
+    const cnd = getConductor(seg.condId);
+    const amps = (R.segAmps.find(s=>s.id===seg.id)||{}).amp||0;
+    if (typeof seg.angleDeg !== 'number'){
+      const {up, down} = segmentUpDown(seg);
+      seg.angleDeg = angleDegFromNodes(up, down);
+    }
+    detailsPanel.innerHTML = `
+      <h4>Secondary Segment</h4>
+      <div class="row">
+        <div><label>Length (ft)</label><input id="segLen" type="number" step="1" value="${fmt(lenFt,0)}" /></div>
+        <div><label>Angle (deg, 0°=E, 90°=S)</label><input id="segAng" type="number" step="1" value="${Math.round(seg.angleDeg||0)}" /></div>
+      </div>
+      <div class="row">
+        <div><label>Conductor</label><select id="segCond"></select></div>
+        <div><label>Ampacity use</label><input type="text" disabled value="${fmt(amps,1)} A" /></div>
+      </div>
+      <div class="note">Angle is oriented from the upstream node. Editing length/angle places the downstream node accordingly.</div>
+      <div class="note">Conductor R=${cnd.R_ohm_kft} Ω/kft, X=${cnd.X_ohm_kft} Ω/kft</div>`;
+    const segCond = detailsPanel.querySelector('#segCond');
+    model.conductors.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; segCond.appendChild(o); });
+    segCond.value = seg.condId;
+    segCond.onchange = ()=>{ seg.condId = segCond.value; requestRender(); };
+
+    const segLenEl = detailsPanel.querySelector('#segLen');
+    const segAngEl = detailsPanel.querySelector('#segAng');
+
+    segLenEl.oninput = ()=>{
+      const val = segLenEl.value;
+      const newLen = (val === '' ? NaN : +val);
+      if (!Number.isFinite(newLen)) { renderCanvas(); computeAndRenderResults(); return; }
+      const {up, down} = segmentUpDown(seg);
+      const A = getNodeById(up), B = getNodeById(down); if (!A || !B) return;
+      const ang = (typeof seg.angleDeg === 'number') ? seg.angleDeg : angleDegFromNodes(up, down);
+      const rad = ang * Math.PI / 180;
+      B.x = A.x + Math.cos(rad) * newLen;
+      B.y = A.y + Math.sin(rad) * newLen;
+      renderCanvas(); computeAndRenderResults();
+    };
+    segLenEl.onblur = ()=> renderDetails();
+
+    segAngEl.oninput = ()=>{
+      const val = segAngEl.value;
+      const newAng = (val === '' ? NaN : +val);
+      if (!Number.isFinite(newAng)) { renderCanvas(); computeAndRenderResults(); return; }
+      seg.angleDeg = newAng;
+      const {up, down} = segmentUpDown(seg);
+      const A = getNodeById(up), B = getNodeById(down); if (!A || !B) return;
+      const len = segmentLengthFt(seg);
+      const rad = newAng * Math.PI / 180;
+      B.x = A.x + Math.cos(rad) * len;
+      B.y = A.y + Math.sin(rad) * len;
+      renderCanvas(); computeAndRenderResults();
+    };
+    segAngEl.onblur = ()=> renderDetails();
+    return;
+  }
+
+  /* Service details */
+  if (selection.type==='service'){
+    const svc = model.services.find(s=>s.id===selection.id);
+    if (!svc){ detailsPanel.innerHTML='Not found.'; return; }
+    const lenFt = serviceLengthFt(svc);
+    const cnd = getConductor(svc.condId);
+    const amps = (R.svcAmps.find(s=>s.id===svc.id)||{}).amp||0;
+    if (typeof svc.angleDeg !== 'number'){
+      const node = getNodeById(svc.nodeId), house = getNodeById(svc.houseId);
+      svc.angleDeg = (node && house) ? Math.atan2(house.y-node.y, house.x-node.x) * 180 / Math.PI : 0;
+    }
+    detailsPanel.innerHTML = `
+      <h4>Service Conductor</h4>
+      <div class="row">
+        <div><label>Length (ft)</label><input id="svcLen" type="number" step="1" value="${fmt(lenFt,0)}" /></div>
+        <div><label>Angle (deg, 0°=E, 90°=S)</label><input id="svcAng" type="number" step="1" value="${Math.round(svc.angleDeg||0)}" /></div>
+      </div>
+      <div class="row">
+        <div><label>Conductor</label><select id="svcCond"></select></div>
+        <div><label>Ampacity use</label><input type="text" disabled value="${fmt(amps,1)} A" /></div>
+      </div>
+      <div class="note">Angle is oriented from the service node (upstream) toward the house.</div>
+      <div class="note">Conductor R=${cnd.R_ohm_kft} Ω/kft, X=${cnd.X_ohm_kft} Ω/kft</div>`;
+    const svcCond = detailsPanel.querySelector('#svcCond');
+    model.conductors.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; svcCond.appendChild(o); });
+    svcCond.value = svc.condId;
+    svcCond.onchange = ()=>{ svc.condId = svcCond.value; requestRender(); };
+
+    const svcLenEl = detailsPanel.querySelector('#svcLen');
+    const svcAngEl = detailsPanel.querySelector('#svcAng');
+
+    svcLenEl.oninput = ()=>{
+      const val = svcLenEl.value;
+      const newLen = (val === '' ? NaN : +val);
+      if (!Number.isFinite(newLen)) { renderCanvas(); computeAndRenderResults(); return; }
+      const node = getNodeById(svc.nodeId), house = getNodeById(svc.houseId); if (!node || !house) return;
+      const ang = (typeof svc.angleDeg === 'number') ? svc.angleDeg : Math.atan2(house.y-node.y, house.x-node.x)*180/Math.PI;
+      const rad = ang * Math.PI / 180;
+      house.x = node.x + Math.cos(rad) * newLen;
+      house.y = node.y + Math.sin(rad) * newLen;
+      renderCanvas(); computeAndRenderResults();
+    };
+    svcLenEl.onblur = ()=> renderDetails();
+
+    svcAngEl.oninput = ()=>{
+      const val = svcAngEl.value;
+      const newAng = (val === '' ? NaN : +val);
+      if (!Number.isFinite(newAng)) { renderCanvas(); computeAndRenderResults(); return; }
+      svc.angleDeg = newAng;
+      const node = getNodeById(svc.nodeId), house = getNodeById(svc.houseId); if (!node || !house) return;
+      const len = serviceLengthFt(svc);
+      const rad = newAng * Math.PI / 180;
+      house.x = node.x + Math.cos(rad) * len;
+      house.y = node.y + Math.sin(rad) * len;
+      renderCanvas(); computeAndRenderResults();
+    };
+    svcAngEl.onblur = ()=> renderDetails();
+    return;
+  }
+
+  /* Node details */
+  if (selection.type==='node'){
+    const n = getNodeById(selection.id);
+    if (!n){ detailsPanel.innerHTML='Not found.'; return; }
+    if (n.type==='xfmr'){
+      detailsPanel.innerHTML = `<h4>Transformer</h4><div class="note">Drag to reposition. Transformer parameters live in the Parameters tab.</div>`;
+    } else {
+      detailsPanel.innerHTML = `<h4>Inline Node</h4><div class="note">Drag to reposition.</div>`;
+    }
+    return;
+  }
+
+  /* House details (stable typing for Name) */
+  if (selection.type==='house'){
+    const h = getNodeById(selection.id);
+    if (!h){ detailsPanel.innerHTML='Not found.'; return; }
+    const Vh = (R.houseVolt||{})[h.id];
+    const Vmag = Vh ? cabs(Vh) : NaN;
+    const dropPct = Vh ? ((model.secondaryNoLoadV - Vmag)/model.secondaryNoLoadV)*100 : NaN;
+
+    detailsPanel.innerHTML = `
+      <h4>House</h4>
+      <div class="row">
+        <div><label>Name</label><input id="hName" type="text" value="${h.name||''}" /></div>
+        <div><label>Heating Type</label>
+          <select id="hHeat">
+            <option ${h.heating==='Gas'?'selected':''}>Gas</option>
+            <option ${h.heating==='Electric'?'selected':''}>Electric</option>
+            <option ${h.heating==='Other'?'selected':''}>Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div><label>Square Footage</label><input id="hSqft" type="number" step="50" value="${h.sqft||2000}" /></div>
+        <div><label>EV kW (optional)</label><input id="hEV" type="number" step="0.1" value="${h.ev_kw||0}" /></div>
+      </div>
+      <div class="row">
+        <div><label>Base kW (editable)</label><input id="hKW" type="number" step="0.1" value="${h.kw_base||5}" /></div>
+        <div><label>Power Factor (lag)</label><input id="hPF" type="number" step="0.01" min="0.1" max="1" value="${h.pf||0.97}" /></div>
+      </div>
+      <div class="row">
+        <div><label>Coincidence Factor</label><input id="hCF" type="number" step="0.01" min="0" max="1" value="${(typeof h.cf==='number')? h.cf : (model.globalCF||0.7)}" /></div>
+        <div><label>Service Conductor</label><select id="hSvcCond"></select></div>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button class="btn secondary" id="estimateLoad">Estimate from Sq Ft</button>
+        <button class="btn danger" id="deleteHouse">Delete House</button>
+      </div>
+      <h4 style="margin-top:12px;">Electrical at this house</h4>
+      <div class="row">
+        <div><div class="kv">Voltage: ${Vh ? fmt(Vmag,1)+' V' : '—'}</div></div>
+        <div><div>Drop: ${Vh ? fmt(dropPct,2)+' %' : '—'}</div></div>
+      </div>`;
+
+    const hSvcCond = detailsPanel.querySelector('#hSvcCond');
+    model.conductors.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; hSvcCond.appendChild(o); });
+    const svc = model.services.find(s=>s.houseId===h.id);
+    hSvcCond.value = svc?.condId || model.defaults.serviceCondId;
+    hSvcCond.onchange = ()=>{ if (svc){ svc.condId = hSvcCond.value; requestRender({skipDetails:true}); } };
+
+    const nameEl = detailsPanel.querySelector('#hName');
+    nameEl.oninput = (e)=>{ h.name = e.target.value; renderCanvas(); computeAndRenderResults(); };
+    nameEl.onblur  = ()=> renderDetails();
+
+    detailsPanel.querySelector('#hHeat').onchange = (e)=>{ h.heating=e.target.value; };
+    detailsPanel.querySelector('#hSqft').oninput = (e)=>{ h.sqft=+e.target.value; };
+    detailsPanel.querySelector('#hEV').oninput   = (e)=>{ h.ev_kw=+e.target.value; requestRender({skipDetails:true}); };
+    detailsPanel.querySelector('#hKW').oninput   = (e)=>{ h.kw_base=+e.target.value; requestRender({skipDetails:true}); };
+    detailsPanel.querySelector('#hPF').oninput   = (e)=>{ h.pf=+e.target.value; requestRender({skipDetails:true}); };
+    detailsPanel.querySelector('#hCF').oninput   = (e)=>{ h.cf=clamp(+e.target.value,0,1); requestRender({skipDetails:true}); };
+
+    detailsPanel.querySelector('#deleteHouse').onclick = ()=>{
+      if(confirm('Delete this house?')){ selection={type:'house', id:h.id}; deleteSelected(); }
+    };
+
+    detailsPanel.querySelector('#estimateLoad').onclick = ()=>{
+      const sqft = +h.sqft||2000;
+      const heat = h.heating || 'Gas';
+      let baseKW = 3 + (heat==='Electric' ? 0.003*sqft : 0.0009*sqft);
+      baseKW = Math.max(2.5, Math.min(baseKW, 20));
+      h.kw_base = +baseKW.toFixed(1);
+      const kwField = detailsPanel.querySelector('#hKW');
+      if (kwField) kwField.value = h.kw_base; // immediate field update
+      computeAndRenderResults(); renderCanvas();
+    };
+    return;
+  }
+}
+
+/** ============================
+ *  Export / Import
+ *  ============================ */
+document.getElementById('btn-export').onclick = ()=>{
+  const data = JSON.stringify(model, null, 2);
+  const blob = new Blob([data], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='secondary-circuit-model.json'; a.click();
+  URL.revokeObjectURL(url);
+};
+document.getElementById('importFile').onchange = (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const fr=new FileReader();
+  fr.onload = ()=>{
+    try{
+      const obj = JSON.parse(fr.result);
+      Object.assign(model, obj);
+      selection=null; render();
+    } catch(err){
+      alert('Invalid JSON file.');
+    }
+  };
+  fr.readAsText(file);
+};
+
+/** ============================
+ *  Self‑Test (quick)
+ *  ============================ */
+document.getElementById('btn-selftest').onclick = ()=>{
+  const backup = JSON.parse(JSON.stringify(model));
+  try{
+    model.nodes = []; model.segments = []; model.services = [];
+    const xf = { id: uid(), type:'xfmr', name:'XFMR', x:200, y:250 }; model.nodes.push(xf);
+    const n1 = { id: uid(), type:'node', name:'N', x:320, y:250 };
+    const n2 = { id: uid(), type:'node', name:'N', x:440, y:250 };
+    model.nodes.push(n1, n2);
+
+    model.secondaryNoLoadV = 240;
+    model.secondaryNomV    = 240;
+    model.transformer = { kva:25, percentZ:2.0, XR:7, connection:'1‑ph 120/240' };
+
+    model.defaults.secondaryCondId = model.conductors.find(c=>/1\/0 Al/i.test(c.name))?.id || model.conductors[0].id;
+    model.segments.push({ id: uid(), from: xf.id, to: n1.id, condId: model.defaults.secondaryCondId });
+    model.segments.push({ id: uid(), from: n1.id, to: n2.id, condId: model.defaults.secondaryCondId });
+
+    const h = { id: uid(), type:'house', name:'SelfTest House', x:520, y:250,
+                sqft:2000, heating:'Gas', ev_kw:6.6, kw_base:5, pf:0.97, cf:0.70,
+                svcCondId: model.defaults.serviceCondId };
+    model.nodes.push(h);
+    const svcCond = model.conductors.find(c=>/#2 Al/i.test(c.name))?.id || model.defaults.serviceCondId;
+    model.services.push({ id: uid(), nodeId: n2.id, houseId: h.id, condId: svcCond });
+
+    const R = compute();
+    alert(`Self‑Test:\nXFMR: ${R.xfmr.S_kVA.toFixed(2)} kVA\nHouse V: ${cabs(R.houseVolt[h.id]).toFixed(2)} V\nDrop: ${(((model.secondaryNoLoadV - cabs(R.houseVolt[h.id]))/model.secondaryNoLoadV)*100).toFixed(2)} %`);
+
+    Object.assign(model, backup); render();
+  } catch(e){
+    console.error(e); alert('Self‑Test error (see console).'); Object.assign(model, backup); render();
+  }
+};
+
+/** Initial render */
+render();
+</script>
+</body>
+</html>
