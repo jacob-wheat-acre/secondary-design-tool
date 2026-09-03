@@ -232,6 +232,11 @@
   <div class="main">
     <div class="canvas-wrap">
       <div class="canvas-header">Drag background to pan. Scroll to zoom.</div>
+      <div id="canvas-sel-indicator" style="position:absolute;top:8px;right:8px;background:#ffffffcc;padding:5px 10px;border-radius:8px;border:1px solid var(--grid);font-size:12px;color:var(--ink);z-index:1;display:none;"></div>
+      <div id="scale-bar-wrap" style="position:absolute;bottom:12px;left:12px;background:#ffffffd0;border:1px solid #d1d5db;border-radius:4px;padding:4px 8px;pointer-events:none;z-index:1;">
+        <svg id="scale-bar-svg" height="20" style="display:block;overflow:visible;"></svg>
+        <div id="scale-bar-label" style="text-align:center;font-size:11px;color:#475569;font-family:Inter,Segoe UI,system-ui,sans-serif;margin-top:2px;"></div>
+      </div>
       <svg id="canvas"></svg>
     </div>
   </div>
@@ -360,6 +365,7 @@ canvas.addEventListener('wheel', (e)=>{
     w: newW, h: newH
   };
   canvas.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  updateScaleBar();
 }, {passive:false});
 
 /** ============================
@@ -597,6 +603,51 @@ function renderConductorLib(){
   };
 }
 
+function updateScaleBar(){
+  const svg = document.getElementById('scale-bar-svg');
+  const lbl = document.getElementById('scale-bar-label');
+  if (!svg || !lbl) return;
+  const ppf = pxPerFt();
+  const zoom = vb.w / (VB_BASE.w || 900);
+  const feetIn120px = 120 * zoom / ppf;
+  const mag = Math.pow(10, Math.floor(Math.log10(Math.max(feetIn120px, 1))));
+  const norm = feetIn120px / mag;
+  const niceFt = mag * (norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10);
+  const barPx = niceFt * ppf / zoom;
+  svg.setAttribute('width', barPx);
+  svg.innerHTML = `
+    <line x1="0" y1="10" x2="${barPx}" y2="10" stroke="#475569" stroke-width="1.5"/>
+    <line x1="0.75" y1="5" x2="0.75" y2="15" stroke="#475569" stroke-width="1.5"/>
+    <line x1="${barPx-0.75}" y1="5" x2="${barPx-0.75}" y2="15" stroke="#475569" stroke-width="1.5"/>`;
+  lbl.textContent = niceFt >= 1000 ? `${niceFt/1000}k ft` : `${niceFt} ft`;
+}
+
+function updateSelectionIndicator(){
+  const el = document.getElementById('canvas-sel-indicator');
+  if (!el) return;
+  if (!selection){ el.style.display='none'; return; }
+  const R = model.calc.results;
+  let text = '';
+  if (selection.type==='segment'){
+    const seg = model.segments.find(s=>s.id===selection.id);
+    if (seg){ text = `Segment · ${Math.round(segmentLengthFt(seg))} ft · ${getConductor(seg.condId).name}`; }
+  } else if (selection.type==='service'){
+    const svc = model.services.find(s=>s.id===selection.id);
+    if (svc){ text = `Service · ${Math.round(serviceLengthFt(svc))} ft · ${getConductor(svc.condId).name}`; }
+  } else if (selection.type==='node'){
+    const n = getNodeById(selection.id);
+    if (n) text = n.type==='xfmr' ? `Transformer · ${model.transformer.kva} kVA` : `Node`;
+  } else if (selection.type==='house'){
+    const h = getNodeById(selection.id);
+    if (h){
+      const Vh = R?.houseVolt?.[h.id];
+      text = `House · ${h.name||'House'}${Vh ? ` · ${cabs(Vh).toFixed(1)} V` : ''}`;
+    }
+  }
+  el.style.display = text ? 'block' : 'none';
+  el.textContent = text;
+}
+
 /** ============================
  *  Canvas drawing & interactions
  *  ============================ */
@@ -815,46 +866,8 @@ function renderCanvas(){
     canvas.appendChild(g);
   });
 
-  /* Scale bar */
-  {
-    const ppf = pxPerFt();
-    const zoom = vb.w / (VB_BASE.w || 900);
-    const feetTarget = 120 * zoom / ppf;
-    const mag = Math.pow(10, Math.floor(Math.log10(Math.max(feetTarget, 1))));
-    const norm = feetTarget / mag;
-    const niceFt = mag * (norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10);
-    const barW = niceFt * ppf;
-    const bx = vb.x + 14 * zoom;
-    const by = vb.y + vb.h - 14 * zoom;
-    const tk = 5 * zoom, fs = 10 * zoom, sw = Math.max(0.5, 1.5 * zoom);
-
-    const sbg = document.createElementNS('http://www.w3.org/2000/svg','g');
-    sbg.setAttribute('pointer-events','none');
-
-    const sbbg = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    sbbg.setAttribute('x', bx-6*zoom); sbbg.setAttribute('y', by-fs-tk-4*zoom);
-    sbbg.setAttribute('width', barW+12*zoom); sbbg.setAttribute('height', fs+tk+8*zoom);
-    sbbg.setAttribute('rx', 3*zoom); sbbg.setAttribute('fill','#ffffffd0');
-    sbbg.setAttribute('stroke','#d1d5db'); sbbg.setAttribute('stroke-width', zoom);
-    sbg.appendChild(sbbg);
-
-    [[bx,by,bx+barW,by],[bx,by-tk,bx,by+tk],[bx+barW,by-tk,bx+barW,by+tk]].forEach(([x1,y1,x2,y2])=>{
-      const l = document.createElementNS('http://www.w3.org/2000/svg','line');
-      l.setAttribute('x1',x1); l.setAttribute('y1',y1); l.setAttribute('x2',x2); l.setAttribute('y2',y2);
-      l.setAttribute('stroke','#475569'); l.setAttribute('stroke-width',sw);
-      sbg.appendChild(l);
-    });
-
-    const sblbl = document.createElementNS('http://www.w3.org/2000/svg','text');
-    sblbl.setAttribute('x', bx+barW/2); sblbl.setAttribute('y', by-tk-2*zoom);
-    sblbl.setAttribute('text-anchor','middle'); sblbl.setAttribute('font-size', fs);
-    sblbl.setAttribute('fill','#475569');
-    sblbl.setAttribute('font-family','Inter, Segoe UI, system-ui, sans-serif');
-    sblbl.textContent = niceFt >= 1000 ? `${niceFt/1000}k ft` : `${niceFt} ft`;
-    sbg.appendChild(sblbl);
-
-    canvas.appendChild(sbg);
-  }
+  updateScaleBar();
+  updateSelectionIndicator();
 
   /* Background interactions: panning, segment/houses */
   canvas.onmousedown = (e)=>{
